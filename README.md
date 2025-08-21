@@ -1,0 +1,345 @@
+````markdown
+# 🐞 BugBrother — AI GitHub Code Debugger (Spring Boot)
+
+A Spring Boot service that:
+1) **Fetches** all `.java` files from a GitHub repository (recursively),
+2) **Sends** them (plus your prompt) to an AI service for analysis/fixes,
+3) **Commits** the fixed files back to GitHub on a new branch and (optionally) creates a Pull Request.
+
+---
+
+## 📸 Screenshots / Media
+
+> Replace the image files in `/docs/media/` with your own screenshots and keep the same names, or change the paths below.
+
+| UI / Flow | Screenshot |
+|---|---|
+| Home / Dashboard | ![Home](docs/media/screen-home.png) |
+| AI Result (diff view) | ![Diff](docs/media/screen-diff.png) |
+| Commit Confirmation | ![Commit](docs/media/screen-commit.png) |
+
+---
+
+## 🧭 Architecture
+
+### High-Level Flow
+```mermaid
+flowchart TD
+    A[Client] -->|/fetch| B[Controller]
+    B --> C[GitHubService\n(list contents + get files)]
+    C -->|.java files| B
+    B -->|/debug| D[DebugService\n(AI)]
+    D --> B
+    B -->|/commitcode| E[CommitService\n(GitHub commits & branch)]
+    E --> F[(GitHub Repo)]
+````
+
+### API Call Sequence (Commit)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Controller
+    participant CommitService
+    participant GitHubAPI as GitHub API
+
+    User->>Controller: POST /commitcode {files[], message}
+    Controller->>CommitService: createFixBranchAndCommit()
+    CommitService->>GitHubAPI: GET /git/ref/heads/{defaultBranch}
+    GitHubAPI-->>CommitService: 200 sha
+    CommitService->>GitHubAPI: POST /git/trees
+    GitHubAPI-->>CommitService: 201 tree
+    CommitService->>GitHubAPI: POST /git/commits
+    GitHubAPI-->>CommitService: 201 commit
+    CommitService->>GitHubAPI: PATCH /git/refs/heads/ai-fix/...
+    GitHubAPI-->>CommitService: 200 updated
+    CommitService-->>Controller: branch + commit info
+    Controller-->>User: 200 OK
+```
+
+-----
+
+## 🛠️ Tech Stack
+
+  * Java 21+, Spring Boot 3+
+  * Spring WebFlux (WebClient)
+  * GitHub REST API v3
+  * Maven Wrapper (`./mvnw`)
+  * Optional: Docker
+
+-----
+
+## ⚙️ Configuration
+
+Create `src/main/resources/application.properties` (or `.yml`) with:
+
+```properties
+server.port=8080
+
+# GitHub
+github.api.base=[https://api.github.com](https://api.github.com)
+github.owner=<your-github-username-or-org>
+github.repo=<your-repo-name>
+github.defaultBranch=main          # IMPORTANT: use "main" unless your repo truly uses "master"
+github.token=${GITHUB_TOKEN}       # Prefer env var; can paste token here during local dev (not recommended)
+
+# AI
+ai.baseUrl=http://localhost:8081     # Your AI service (example)
+ai.model=gpt-fixit
+```
+
+**Token scopes**: at minimum `repo` (private repos) or `public_repo` (public), plus `contents:write` to commit code. For PR creation add `pull_requests:write`.
+
+Set the token safely via an environment variable:
+
+**macOS/Linux:**
+
+```bash
+export GITHUB_TOKEN=ghp_your_token_with_repo_scopes
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$env:GITHUB_TOKEN="ghp_your_token_with_repo_scopes"
+```
+
+-----
+
+## 🚀 Build & Run
+
+### With Maven
+
+```bash
+# Build the project
+./mvnw clean package
+
+# Run the application
+./mvnw spring-boot:run
+```
+
+### With Docker
+
+```bash
+# 1. Build the Docker image
+docker build -t bug-brother:latest .
+
+# 2. Run the container
+docker run --rm -p 8080:8080 \
+  -e GITHUB_TOKEN=ghp_your_token \
+  -e GITHUB_API_BASE=[https://api.github.com](https://api.github.com) \
+  -e GITHUB_DEFAULTBRANCH=main \
+  bug-brother:latest
+```
+
+*(If you use env variables for other properties, bind them in `application.properties` like `github.defaultBranch=${GITHUB_DEFAULTBRANCH:main}` etc.)*
+
+-----
+
+## 🔌 REST API
+
+**Base URL**: `http://localhost:8080`
+
+### 1\) Fetch all .java files
+
+`GET /fetch/{owner}/{repo}`
+
+**Response (example):**
+
+```json
+{
+  "files": [
+    { "path": "src/main/java/com/example/App.java", "content": "public class App { ... }" },
+    { "path": "src/main/java/com/example/service/Svc.java", "content": "..." }
+  ],
+  "count": 2
+}
+```
+
+### 2\) Send files + prompt to AI
+
+`POST /debug/{owner}/{repo}`
+
+**Body:**
+
+```json
+{
+  "query": "Fix NPEs, rename unclear variables, add null checks"
+}
+```
+
+**Response (example):**
+
+```json
+{
+  "fixedFiles": [
+    {
+      "path": "src/main/java/com/example/App.java",
+      "content": "/* FIXED */ public class App { ... }",
+      "notes": "Added null checks; renamed 'int' var to 'convertedBinary'"
+    }
+  ],
+  "explanations": "Summary of applied fixes..."
+}
+```
+
+### 3\) Commit fixed files
+
+`POST /commitcode/{owner}/{repo}`
+
+**Body:**
+
+```json
+{
+  "message": "AI: fix null checks + rename vars",
+  "branchName": "ai-fix/2025-06-26-001",
+  "files": [
+    {
+      "path": "src/main/java/com/example/App.java",
+      "content": "/* FIXED */ public class App { ... }"
+    }
+  ],
+  "createPullRequest": true,
+  "pullRequest": {
+    "title": "AI Fixes: null safety + naming",
+    "base": "main",
+    "body": "Auto-generated by BugBrother"
+  }
+}
+```
+
+**Response (example):**
+
+```json
+{
+  "branch": "ai-fix/2025-06-26-001",
+  "commitSha": "abc123...",
+  "pullRequestUrl": "[https://github.com/owner/repo/pull/42](https://github.com/owner/repo/pull/42)"
+}
+```
+
+-----
+
+## 🧪 cURL Examples
+
+**Fetch:**
+
+```bash
+curl "http://localhost:8080/fetch/<owner>/<repo>"
+```
+
+**Debug:**
+
+```bash
+curl -X POST "http://localhost:8080/debug/<owner>/<repo>" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"Refactor + add unit tests"}'
+```
+
+**Commit:**
+
+```bash
+# Create a payload.json file with the commit body from above
+curl -X POST "http://localhost:8080/commitcode/<owner>/<repo>" \
+  -H "Content-Type: application/json" \
+  -d @payload.json
+```
+
+-----
+
+## 🛡️ Troubleshooting
+
+#### `401 Unauthorized` (GitHub)
+
+  * **Log sample**: `WebClientResponseException$Unauthorized: 401 Unauthorized from GET https://api.github.com/repos/<owner>/<repo>/contents/`
+  * **Fix checklist**:
+    1.  Ensure `GITHUB_TOKEN` is present at runtime.
+    2.  Token has correct scopes: `repo` + `contents:write`.
+    3.  The repo is accessible to the token (org SSO-enabled tokens may need approval).
+
+#### `404 Not Found` for `.../git/ref/heads/master`
+
+  * **Log sample**: `404 Not Found from GET .../git/ref/heads/master`
+  * **Cause**: Your repo’s default branch is `main`, not `master`.
+  * **Fix**: Set `github.defaultBranch=main` in `application.properties`.
+
+#### Rate Limiting
+
+  * You’ll see `403` errors with rate limit headers. Use a PAT and minimize repeated/unnecessary API calls.
+
+#### Base64 Content
+
+  * The GitHub Contents API returns file content in Base64 with line breaks (`\n`). Remember to strip these before decoding.
+
+-----
+
+## 🔒 Security
+
+  * **Never commit real tokens** to version control.
+  * Prefer environment variables or a secrets management tool.
+  * Validate user inputs before passing them to GitHub or AI endpoints.
+
+-----
+
+## 🧱 Project Structure
+
+```
+src/
+ └── main/java/com/razeef/BugBrother/
+      ├── controllers/
+      │    └── GitAiDebug.java
+      ├── services/
+      │    ├── GitHubService.java
+      │    ├── DebugService.java
+      │    └── CommitService.java
+      ├── model/
+      │    └── FixedFile.java
+      └── BugBrotherApplication.java
+ └── main/resources/
+      └── application.properties
+docs/
+ └── media/
+      ├── screen-home.png
+      ├── screen-diff.png
+      └── screen-commit.png
+```
+
+-----
+
+## 🗺️ Roadmap
+
+  - [x] Fetch `.java` files recursively
+  - [x] AI debugging integration
+  - [x] Commit fixed files on `ai-fix/*` branches
+  - [x] Optional PR auto-creation
+  - [ ] Add labels to auto-created PR
+  - [ ] Inline diff view in the UI
+  - [ ] Support for multiple programming languages
+
+-----
+
+## 🤝 Contributing
+
+1.  Fork the repository
+2.  Create a feature branch (`git checkout -b feat/my-new-idea`)
+3.  Commit your changes (`git commit -m 'feat: Add some amazing feature'`)
+4.  Push to the branch (`git push origin feat/my-new-idea`)
+5.  Open a Pull Request
+
+-----
+
+## 📜 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+
+-----
+
+## 🙏 Credits
+
+  * Spring Boot, Spring WebFlux
+  * GitHub REST API
+
+<!-- end list -->
+
+```
+```

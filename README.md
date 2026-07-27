@@ -1,10 +1,12 @@
-````markdown
-# 🐞 BugBrother — AI GitHub Code Debugger (Spring Boot)
+# 🐞 BugBrother — Distributed AI GitHub Code Debugger
 
-A Spring Boot service that:
-1) **Fetches** all `.java` files from a GitHub repository (recursively),
-2) **Sends** them (plus your prompt) to an AI service for analysis/fixes,
-3) **Commits** the fixed files back to GitHub on a new branch and (optionally) creates a Pull Request.
+BugBrother is an AI-powered code debugging platform. It has been recently refactored from a monolithic Spring Boot application into a **true distributed microservice architecture** utilizing **Apache Kafka**.
+
+The platform is designed to:
+1) **Ingest** user requests containing broken `.java` files from a GitHub repository.
+2) **Delegate** the heavy lifting of AI processing securely via Kafka.
+3) **Analyze & Fix** the files using a backend worker service connected to a LLM.
+4) **Commit** the fixed files back to GitHub on a new branch automatically.
 
 ---
 
@@ -22,299 +24,228 @@ A Spring Boot service that:
 
 ## 🧭 Architecture
 
+The system is split into two distinct Spring Boot applications, each fulfilling a single responsibility:
+
+1. **FixHub Ingestion Service**: Serves as the user-facing entry point. It receives debugging requests, authenticates the user, extracts the GitHub OAuth token, and pushes the work payload to Kafka.
+2. **FixHub Worker Service**: Runs asynchronously in the background. It listens to Kafka, communicates with the AI to generate fixes, and commits those fixes to GitHub on the user's behalf.
+
 ### High-Level Flow
 ```mermaid
 flowchart TD
-    A[Client] -->|/fetch| B[Controller]
-    B --> C[GitHubService\n(list contents + get files)]
-    C -->|.java files| B
-    B -->|/debug| D[DebugService\n(AI)]
-    D --> B
-    B -->|/commitcode| E[CommitService\n(GitHub commits & branch)]
-    E --> F[(GitHub Repo)]
-````
+    User([User]) -->|POST /debug| IS[FixHub Ingestion Service]
+    IS <--> Auth[GitAuthService (OAuth2)]
+    IS -->|Publish CodeGuardianTask| Kafka{Apache Kafka}
+    Kafka -->|Consume Task| WS[FixHub Worker Service]
+    WS <--> AI[GitAiLayer (LLM)]
+    WS <--> Parser[FixedfileParser]
+    WS --> CS[CommitService]
+    CS -->|API Calls| GitHub[(GitHub Repo)]
+```
 
-### API Call Sequence (Commit)
+### API Call Sequence (End-to-End)
 
 ```mermaid
 sequenceDiagram
-    actor User
-    participant Controller
-    participant CommitService
-    participant GitHubAPI as GitHub API
+    autonumber
+    actor User as User / Client
+    participant IS as FixHub Ingestion Service<br/>(GitAiDebug)
+    participant Auth as GitAuthService<br/>(OAuth Context)
+    participant Kafka as Apache Kafka<br/>(code-guardian-tasks)
+    participant WS as FixHub Worker Service<br/>(DebugWorkerService)
+    participant AI as GitAiLayer / AiService
+    participant Parser as FixedfileParser
+    participant CS as CommitService
+    participant GitHub as GitHub API
 
-    User->>Controller: POST /commitcode {files[], message}
-    Controller->>CommitService: createFixBranchAndCommit()
-    CommitService->>GitHubAPI: GET /git/ref/heads/{defaultBranch}
-    GitHubAPI-->>CommitService: 200 sha
-    CommitService->>GitHubAPI: POST /git/trees
-    GitHubAPI-->>CommitService: 201 tree
-    CommitService->>GitHubAPI: POST /git/commits
-    GitHubAPI-->>CommitService: 201 commit
-    CommitService->>GitHubAPI: PATCH /git/refs/heads/ai-fix/...
-    GitHubAPI-->>CommitService: 200 updated
-    CommitService-->>Controller: branch + commit info
-    Controller-->>User: 200 OK
+    User->>IS: POST /debug/{owner}/{repo} <br/>(ResponsePayload: files, userQ)
+    activate IS
+    
+    IS->>Auth: Request GitHub Access Token
+    activate Auth
+    Auth-->>IS: Return Token
+    deactivate Auth
+    
+    IS->>Kafka: Publish CodeGuardianTask <br/>(owner, repo, payload, token)
+    IS-->>User: HTTP 202 Accepted (Task Queued)
+    deactivate IS
+    
+    Kafka-->>WS: Consume CodeGuardianTask
+    activate WS
+    
+    WS->>AI: askAiDebug(files, userQ)
+    activate AI
+    AI-->>WS: Return raw AI response (Fixed Code)
+    deactivate AI
+    
+    WS->>Parser: parseFixedFiles(aiResponse)
+    activate Parser
+    Parser-->>WS: Return List<FixedFile>
+    deactivate Parser
+    
+    WS->>CS: createFixBranchAndCommit(owner, repo, files, token)
+    activate CS
+    
+    CS->>GitHub: Get Master Branch SHA
+    GitHub-->>CS: return SHA
+    
+    CS->>GitHub: Create new branch (ai-fix/{uuid})
+    GitHub-->>CS: branch created
+    
+    loop For each FixedFile
+        CS->>GitHub: Update/Create file contents
+        GitHub-->>CS: commit successful
+    end
+    
+    CS-->>WS: Branch creation & commits finished
+    deactivate CS
+    
+    deactivate WS
 ```
 
 -----
 
 ## 🛠️ Tech Stack
 
-  * Java 21+, Spring Boot 3+
-  * Spring WebFlux (WebClient)
-  * GitHub REST API v3
-  * Maven Wrapper (`./mvnw`)
-  * Optional: Docker
+* Java 21+, Spring Boot 3+
+* Apache Kafka (Message Broker)
+* Spring AI (OpenAI Compatible API)
+* Spring WebFlux (WebClient)
+* Spring Security (OAuth2 Client)
+* GitHub REST API v3
+* Gradle
 
 -----
 
 ## ⚙️ Configuration
 
-Create `src/main/resources/application.properties` (or `.yml`) with:
+Ensure you have a running instance of **Apache Kafka** (e.g. locally via Docker on port 9092).
 
+### Ingestion Service (`fixhub-ingestion-service/src/main/resources/application.properties`)
 ```properties
 server.port=8080
 
-# GitHub
-github.api.base=[https://api.github.com](https://api.github.com)
-github.owner=<your-github-username-or-org>
-github.repo=<your-repo-name>
-github.defaultBranch=main          # IMPORTANT: use "main" unless your repo truly uses "master"
-github.token=${GITHUB_TOKEN}       # Prefer env var; can paste token here during local dev (not recommended)
+# GitHub OAuth2 config required for authentication
+spring.security.oauth2.client.registration.github.client-id=YOUR_CLIENT_ID
+spring.security.oauth2.client.registration.github.client-secret=YOUR_CLIENT_SECRET
+
+# Kafka
+spring.kafka.bootstrap-servers=localhost:9092
+```
+
+### Worker Service (`fixhub-worker-service/src/main/resources/application.properties`)
+```properties
+server.port=8081
+
+# Kafka
+spring.kafka.bootstrap-servers=localhost:9092
+spring.kafka.consumer.group-id=code-guardian-group
+spring.kafka.consumer.auto-offset-reset=earliest
 
 # AI
-ai.baseUrl=http://localhost:8081     # Your AI service (example)
-ai.model=gpt-fixit
+spring.ai.openai.api-key=YOUR_API_KEY
+spring.ai.openai.base-url=http://localhost:8081 # Or OpenAI API
+spring.ai.openai.chat.options.model=gpt-fixit
 ```
 
-**Token scopes**: at minimum `repo` (private repos) or `public_repo` (public), plus `contents:write` to commit code. For PR creation add `pull_requests:write`.
-
-Set the token safely via an environment variable:
-
-**macOS/Linux:**
-
-```bash
-export GITHUB_TOKEN=ghp_your_token_with_repo_scopes
-```
-
-**Windows (PowerShell):**
-
-```powershell
-$env:GITHUB_TOKEN="ghp_your_token_with_repo_scopes"
-```
+**Token scopes**: at minimum `repo` (private repos) or `public_repo` (public), plus `contents:write` to commit code.
 
 -----
 
 ## 🚀 Build & Run
 
-### With Maven
+### 1. Build Both Microservices
 
 ```bash
-# Build the project
-./mvnw clean package
+cd fixhub-ingestion-service
+./gradlew build
 
-# Run the application
-./mvnw spring-boot:run
+cd ../fixhub-worker-service
+./gradlew build
 ```
 
-### With Docker
+### 2. Start the Applications
 
+You must run both services alongside Kafka.
+
+**Run Ingestion Service:**
 ```bash
-# 1. Build the Docker image
-docker build -t bug-brother:latest .
-
-# 2. Run the container
-docker run --rm -p 8080:8080 \
-  -e GITHUB_TOKEN=ghp_your_token \
-  -e GITHUB_API_BASE=[https://api.github.com](https://api.github.com) \
-  -e GITHUB_DEFAULTBRANCH=main \
-  bug-brother:latest
+cd fixhub-ingestion-service
+./gradlew bootRun
 ```
 
-*(If you use env variables for other properties, bind them in `application.properties` like `github.defaultBranch=${GITHUB_DEFAULTBRANCH:main}` etc.)*
+**Run Worker Service:**
+```bash
+cd fixhub-worker-service
+./gradlew bootRun
+```
 
 -----
 
 ## 🔌 REST API
 
-**Base URL**: `http://localhost:8080`
+**Base URL**: `http://localhost:8080` (Ingestion Service)
 
-### 1\) Fetch all .java files
-
-`GET /fetch/{owner}/{repo}`
-
-**Response (example):**
-
-```json
-{
-  "files": [
-    { "path": "src/main/java/com/example/App.java", "content": "public class App { ... }" },
-    { "path": "src/main/java/com/example/service/Svc.java", "content": "..." }
-  ],
-  "count": 2
-}
-```
-
-### 2\) Send files + prompt to AI
+### Submit a Debugging Task
 
 `POST /debug/{owner}/{repo}`
 
-**Body:**
-
-```json
-{
-  "query": "Fix NPEs, rename unclear variables, add null checks"
-}
-```
-
-**Response (example):**
-
-```json
-{
-  "fixedFiles": [
-    {
-      "path": "src/main/java/com/example/App.java",
-      "content": "/* FIXED */ public class App { ... }",
-      "notes": "Added null checks; renamed 'int' var to 'convertedBinary'"
-    }
-  ],
-  "explanations": "Summary of applied fixes..."
-}
-```
-
-### 3\) Commit fixed files
-
-`POST /commitcode/{owner}/{repo}`
+This endpoint queues a debugging task to Kafka. 
 
 **Body:**
 
 ```json
 {
-  "message": "AI: fix null checks + rename vars",
-  "branchName": "ai-fix/2025-06-26-001",
+  "userQ": "Fix NPEs, rename unclear variables, add null checks",
   "files": [
     {
-      "path": "src/main/java/com/example/App.java",
-      "content": "/* FIXED */ public class App { ... }"
+       "path": "src/main/java/com/example/App.java", 
+       "content": "public class App { ... }" 
     }
-  ],
-  "createPullRequest": true,
-  "pullRequest": {
-    "title": "AI Fixes: null safety + naming",
-    "base": "main",
-    "body": "Auto-generated by BugBrother"
-  }
+  ]
 }
 ```
 
-**Response (example):**
+**Response:**
 
-```json
-{
-  "branch": "ai-fix/2025-06-26-001",
-  "commitSha": "abc123...",
-  "pullRequestUrl": "[https://github.com/owner/repo/pull/42](https://github.com/owner/repo/pull/42)"
-}
-```
+`202 Accepted` - "Task accepted and sent to worker queue"
 
------
-
-## 🧪 cURL Examples
-
-**Fetch:**
-
-```bash
-curl "http://localhost:8080/fetch/<owner>/<repo>"
-```
-
-**Debug:**
-
-```bash
-curl -X POST "http://localhost:8080/debug/<owner>/<repo>" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"Refactor + add unit tests"}'
-```
-
-**Commit:**
-
-```bash
-# Create a payload.json file with the commit body from above
-curl -X POST "http://localhost:8080/commitcode/<owner>/<repo>" \
-  -H "Content-Type: application/json" \
-  -d @payload.json
-```
-
------
-
-## 🛡️ Troubleshooting
-
-#### `401 Unauthorized` (GitHub)
-
-  * **Log sample**: `WebClientResponseException$Unauthorized: 401 Unauthorized from GET https://api.github.com/repos/<owner>/<repo>/contents/`
-  * **Fix checklist**:
-    1.  Ensure `GITHUB_TOKEN` is present at runtime.
-    2.  Token has correct scopes: `repo` + `contents:write`.
-    3.  The repo is accessible to the token (org SSO-enabled tokens may need approval).
-
-#### `404 Not Found` for `.../git/ref/heads/master`
-
-  * **Log sample**: `404 Not Found from GET .../git/ref/heads/master`
-  * **Cause**: Your repo’s default branch is `main`, not `master`.
-  * **Fix**: Set `github.defaultBranch=main` in `application.properties`.
-
-#### Rate Limiting
-
-  * You’ll see `403` errors with rate limit headers. Use a PAT and minimize repeated/unnecessary API calls.
-
-#### Base64 Content
-
-  * The GitHub Contents API returns file content in Base64 with line breaks (`\n`). Remember to strip these before decoding.
-
------
-
-## 🔒 Security
-
-  * **Never commit real tokens** to version control.
-  * Prefer environment variables or a secrets management tool.
-  * Validate user inputs before passing them to GitHub or AI endpoints.
+*(The worker service will asynchronously pick up this task, send it to the AI, and commit the fixes directly to a new branch in your repository!)*
 
 -----
 
 ## 🧱 Project Structure
 
 ```
-src/
- └── main/java/com/razeef/BugBrother/
-      ├── controllers/
-      │    └── GitAiDebug.java
-      ├── services/
-      │    ├── GitHubService.java
-      │    ├── DebugService.java
-      │    └── CommitService.java
-      ├── model/
-      │    └── FixedFile.java
-      └── BugBrotherApplication.java
- └── main/resources/
-      └── application.properties
-docs/
- └── media/
-      ├── screen-home.png
-      ├── screen-diff.png
-      └── screen-commit.png
+BugBrother/
+ ├── fixhub-ingestion-service/
+ │    ├── build.gradle
+ │    └── src/main/java/com/razeef/bugbrother/
+ │         ├── controllers/
+ │         │    └── GitAiDebug.java (Kafka Producer)
+ │         ├── config/
+ │         │    └── Oauth.java
+ │         ├── models/
+ │         │    ├── CodeGuardianTask.java
+ │         │    └── ResponsePayload.java
+ │         └── services/
+ │              └── GitAuthService.java
+ │
+ ├── fixhub-worker-service/
+ │    ├── build.gradle
+ │    └── src/main/java/com/razeef/bugbrother/
+ │         ├── services/
+ │         │    ├── DebugWorkerService.java (Kafka Consumer)
+ │         │    ├── GitHubService.java
+ │         │    ├── AiService.java
+ │         │    └── CommitService.java
+ │         ├── parsers/
+ │         │    └── FixedfileParser.java
+ │         └── Wrappers/
+ │              └── GitAiLayer.java
+ │
+ └── docs/
+      └── media/
 ```
-
------
-
-## 🗺️ Roadmap
-
-  - [x] Fetch `.java` files recursively
-  - [x] AI debugging integration
-  - [x] Commit fixed files on `ai-fix/*` branches
-  - [x] Optional PR auto-creation
-  - [ ] Add labels to auto-created PR
-  - [ ] Inline diff view in the UI
-  - [ ] Support for multiple programming languages
 
 -----
 
@@ -330,16 +261,4 @@ docs/
 
 ## 📜 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
-
------
-
-## 🙏 Credits
-
-  * Spring Boot, Spring WebFlux
-  * GitHub REST API
-
-<!-- end list -->
-
-```
-```
+This project is licensed under the **MIT License**.

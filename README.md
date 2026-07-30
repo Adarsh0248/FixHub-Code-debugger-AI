@@ -1,6 +1,7 @@
-# 🐞 BugBrother — Distributed AI GitHub Code Debugger
 
-BugBrother is an AI-powered code debugging platform. It has been recently refactored from a monolithic Spring Boot application into a **true distributed microservice architecture** utilizing **Apache Kafka**.
+# 🛡️ Code Guardian — Distributed AI Code Debugger
+
+Code Guardian is an AI-powered code debugging platform. It has been recently refactored from a monolithic Spring Boot application into a **true distributed microservice architecture** utilizing **Apache Kafka**.
 
 The platform is designed to:
 1) **Ingest** user requests containing broken `.java` files from a GitHub repository.
@@ -12,7 +13,7 @@ The platform is designed to:
 
 ## 📸 Screenshots / Media
 
-> Replace the image files in `/docs/media/` with your own screenshots and keep the same names, or change the paths below.
+
 
 | UI / Flow | Screenshot |
 |---|---|
@@ -32,14 +33,15 @@ The system is split into two distinct Spring Boot applications, each fulfilling 
 ### High-Level Flow
 ```mermaid
 flowchart TD
-    User([User]) -->|POST /debug| IS[FixHub Ingestion Service]
-    IS <--> Auth[GitAuthService (OAuth2)]
+    User([User]) -->|POST /api/debug/trigger| IS[FixHub Ingestion Service]
+    IS <--> Auth["GitAuthService (OAuth2)"]
     IS -->|Publish CodeGuardianTask| Kafka{Apache Kafka}
     Kafka -->|Consume Task| WS[FixHub Worker Service]
-    WS <--> AI[GitAiLayer (LLM)]
+    WS <--> AI["GitAiLayer (LLM)"]
     WS <--> Parser[FixedfileParser]
     WS --> CS[CommitService]
-    CS -->|API Calls| GitHub[(GitHub Repo)]
+    CS -->|API Calls| GitHub[("GitHub Repo")]
+
 ```
 
 ### API Call Sequence (End-to-End)
@@ -57,7 +59,7 @@ sequenceDiagram
     participant CS as CommitService
     participant GitHub as GitHub API
 
-    User->>IS: POST /debug/{owner}/{repo} <br/>(ResponsePayload: files, userQ)
+    User->>IS: POST /api/debug/trigger <br/>(ResponsePayload: files, userQ)
     activate IS
     
     IS->>Auth: Request GitHub Access Token
@@ -100,9 +102,10 @@ sequenceDiagram
     deactivate CS
     
     deactivate WS
+
 ```
 
------
+---
 
 ## 🛠️ Tech Stack
 
@@ -114,13 +117,14 @@ sequenceDiagram
 * GitHub REST API v3
 * Gradle
 
------
+---
 
 ## ⚙️ Configuration
 
 Ensure you have a running instance of **Apache Kafka** (e.g. locally via Docker on port 9092).
 
 ### Ingestion Service (`fixhub-ingestion-service/src/main/resources/application.properties`)
+
 ```properties
 server.port=8080
 
@@ -130,9 +134,11 @@ spring.security.oauth2.client.registration.github.client-secret=YOUR_CLIENT_SECR
 
 # Kafka
 spring.kafka.bootstrap-servers=localhost:9092
+
 ```
 
 ### Worker Service (`fixhub-worker-service/src/main/resources/application.properties`)
+
 ```properties
 server.port=8081
 
@@ -143,13 +149,14 @@ spring.kafka.consumer.auto-offset-reset=earliest
 
 # AI
 spring.ai.openai.api-key=YOUR_API_KEY
-spring.ai.openai.base-url=http://localhost:8081 # Or OpenAI API
+spring.ai.openai.base-url=[https://api.openai.com](https://api.openai.com)
 spring.ai.openai.chat.options.model=gpt-fixit
+
 ```
 
 **Token scopes**: at minimum `repo` (private repos) or `public_repo` (public), plus `contents:write` to commit code.
 
------
+---
 
 ## 🚀 Build & Run
 
@@ -161,6 +168,7 @@ cd fixhub-ingestion-service
 
 cd ../fixhub-worker-service
 ./gradlew build
+
 ```
 
 ### 2. Start the Applications
@@ -168,18 +176,22 @@ cd ../fixhub-worker-service
 You must run both services alongside Kafka.
 
 **Run Ingestion Service:**
+
 ```bash
 cd fixhub-ingestion-service
 ./gradlew bootRun
+
 ```
 
 **Run Worker Service:**
+
 ```bash
 cd fixhub-worker-service
 ./gradlew bootRun
+
 ```
 
------
+---
 
 ## 🔌 REST API
 
@@ -187,9 +199,9 @@ cd fixhub-worker-service
 
 ### Submit a Debugging Task
 
-`POST /debug/{owner}/{repo}`
+`POST /api/debug/trigger`
 
-This endpoint queues a debugging task to Kafka. 
+This endpoint queues a debugging task to Kafka.
 
 **Body:**
 
@@ -203,6 +215,7 @@ This endpoint queues a debugging task to Kafka.
     }
   ]
 }
+
 ```
 
 **Response:**
@@ -211,12 +224,12 @@ This endpoint queues a debugging task to Kafka.
 
 *(The worker service will asynchronously pick up this task, send it to the AI, and commit the fixes directly to a new branch in your repository!)*
 
------
+---
 
 ## 🧱 Project Structure
 
 ```
-BugBrother/
+CodeGuardian/
  ├── fixhub-ingestion-service/
  │    ├── build.gradle
  │    └── src/main/java/com/razeef/bugbrother/
@@ -228,7 +241,7 @@ BugBrother/
  │         │    ├── CodeGuardianTask.java
  │         │    └── ResponsePayload.java
  │         └── services/
- │              └── GitAuthService.java
+ │             └── GitAuthService.java
  │
  ├── fixhub-worker-service/
  │    ├── build.gradle
@@ -241,24 +254,29 @@ BugBrother/
  │         ├── parsers/
  │         │    └── FixedfileParser.java
  │         └── Wrappers/
- │              └── GitAiLayer.java
+ │             └── GitAiLayer.java
  │
  └── docs/
-      └── media/
+     └── media/
+
 ```
 
------
+---
 
 ## 🤝 Contributing
 
-1.  Fork the repository
-2.  Create a feature branch (`git checkout -b feat/my-new-idea`)
-3.  Commit your changes (`git commit -m 'feat: Add some amazing feature'`)
-4.  Push to the branch (`git push origin feat/my-new-idea`)
-5.  Open a Pull Request
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/my-new-idea`)
+3. Commit your changes (`git commit -m 'feat: Add some amazing feature'`)
+4. Push to the branch (`git push origin feat/my-new-idea`)
+5. Open a Pull Request
 
------
+---
 
 ## 📜 License
 
 This project is licensed under the **MIT License**.
+
+```
+
+```

@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+// Copied from the vectorsearch-gateway repo (proto/gateway.proto) so
+// fixhub-worker-service can generate its own Java gRPC client. The Go
+// go_package option is dropped in favor of Java package options; the wire
+// contract (package name, message/service shapes) is otherwise unchanged.
+//
+// Deliberately self-contained: the gateway is the only service this client
+// ever talks to, and its wire contract doesn't require also knowing
+// coordinator.proto (the vector index's internal contract) — gatewayd
+// converts between the two internally.
+package vectorsearch.gateway.v1;
+
+option java_package = "com.razeef.bugbrother.grpc.gateway";
+option java_multiple_files = true;
+
+service Gateway {
+    rpc Insert(GatewayInsertRequest) returns (GatewayInsertResponse);
+    rpc Search(GatewaySearchRequest) returns (GatewaySearchResponse);
+    rpc Delete(GatewayDeleteRequest) returns (GatewayDeleteResponse);
+}
+
+message GatewayKey {
+  uint64 client_id = 1;
+  uint64 label     = 2;
+}
+
+message GatewayScoredResult {
+  GatewayKey key      = 1;
+  float      distance = 2;
+}
+
+message GatewaySearchRequest {
+  string text = 1;
+  uint32 k = 2;
+  uint32 ef = 3;
+  bool allow_partial = 4;
+  uint64 client_id = 5;
+}
+
+message GatewaySearchResponse {
+  repeated GatewayScoredResult results = 1;
+  uint32 shards_queried = 2;
+  uint32 shards_failed  = 3;
+}
+
+message GatewayInsertRequest {
+  GatewayKey key = 1;
+  string text = 2;
+}
+
+message GatewayInsertResponse {}
+
+message GatewayDeleteRequest  { GatewayKey key = 1; }
+message GatewayDeleteResponse {}

@@ -16,13 +16,24 @@ public class GitAiLayer {
     private AiService aiService;
 
     public String askAiDebug(List<CommitService.FixedFile> dataList,String userQuery){
+        return askAiDebug(dataList, userQuery, List.of());
+    }
+
+    public String askAiDebug(List<CommitService.FixedFile> dataList,String userQuery,List<CommitService.FixedFile> relatedContext){
 
         StringBuilder requestToAi= new StringBuilder();
 
-        int fileCounter = 1;
         for (CommitService.FixedFile file : dataList) {
             requestToAi.append("==== File ").append(file.path()).append(" ====\n");
             requestToAi.append(file.fixedContent()).append("\n\n");
+        }
+
+        if (!relatedContext.isEmpty()) {
+            requestToAi.append("==== Related repository context (read-only, for reference) ====\n");
+            for (CommitService.FixedFile file : relatedContext) {
+                requestToAi.append("---- ").append(file.path()).append(" ----\n");
+                requestToAi.append(file.fixedContent()).append("\n\n");
+            }
         }
 
         String finalRequest=requestToAi.toString();
@@ -41,7 +52,14 @@ Your tasks are:
 
 IMPORTANT INSTRUCTIONS (DO NOT IGNORE):
 
-- For EVERY FILE, you must respond in the following exact format:
+- The request may end with a "Related repository context" section listing other
+  files from the same repository, marked with ---- File ---- headers instead of
+  ==== File ====. That section is READ-ONLY background for understanding
+  imports, types, and conventions used by the files you were asked to fix.
+  Do NOT return, rewrite, or include those files in your response unless a fix
+  to one of the requested files genuinely requires changing them too.
+
+- For EVERY FILE you were asked to fix, you must respond in the following exact format:
 
 ==== File: <filename> ====
 ```<language>

@@ -28,7 +28,7 @@ The platform is designed to:
 The system is split into two distinct Spring Boot applications, each fulfilling a single responsibility:
 
 1. **FixHub Ingestion Service**: Serves as the user-facing entry point. It receives debugging requests, authenticates the user, extracts the GitHub OAuth token, and pushes the work payload to Kafka.
-2. **FixHub Worker Service**: Runs asynchronously in the background. It listens to Kafka, communicates with the AI to generate fixes, and commits those fixes to GitHub on the user's behalf.
+2. **FixHub Worker Service**: Runs asynchronously in the background. It listens to Kafka, communicates with the AI to generate fixes, and commits those fixes to GitHub on the user's behalf. Before asking the AI, it retrieves semantically related files from the same repository via a self-built vector search stack (RAG) and includes them as read-only context; after a successful commit it re-indexes the repo's files so future tasks retrieve richer context.
 
 ### High-Level Flow
 ```mermaid
@@ -41,6 +41,9 @@ flowchart TD
     WS <--> Parser[FixedfileParser]
     WS --> CS[CommitService]
     CS -->|API Calls| GitHub[("GitHub Repo")]
+    WS <--> VS["VectorSearchService (RAG)"]
+    VS -->|gRPC| GW[("vectorsearch-gateway")]
+    VS -->|fetch repo files| GitHub
 
 ```
 
@@ -115,6 +118,7 @@ sequenceDiagram
 * Spring WebFlux (WebClient)
 * Spring Security (OAuth2 Client)
 * GitHub REST API v3
+* gRPC (Java client) to a self-built vector search stack (RAG retrieval/indexing)
 * Gradle
 
 ---
@@ -152,9 +156,21 @@ spring.ai.openai.api-key=YOUR_API_KEY
 spring.ai.openai.base-url=[https://api.openai.com](https://api.openai.com)
 spring.ai.openai.chat.options.model=gpt-fixit
 
+# Vector Search Gateway (RAG) - optional; if unreachable, RAG context is
+# skipped and the worker falls back to today's plain (non-RAG) behavior.
+vectorsearch.gateway.host=localhost
+vectorsearch.gateway.port=50053
+
 ```
 
 **Token scopes**: at minimum `repo` (private repos) or `public_repo` (public), plus `contents:write` to commit code.
+
+**RAG stack (optional)**: the worker service retrieves and indexes repository
+context through a separately-run [`vectorsearch-gateway`](https://github.com/Razeefshaik/vectorsearch-gateway)
+(gRPC `Gateway` service, port `50053` by default), which in turn talks to its
+embedding services, Kafka, and a `VectorSearch` coordinator backed by a
+from-scratch HNSW engine. None of that stack lives in this repo; if it isn't
+running, `DebugWorkerService` simply proceeds without related-file context.
 
 ---
 
@@ -245,10 +261,14 @@ CodeGuardian/
  │
  ├── fixhub-worker-service/
  │    ├── build.gradle
+ │    ├── src/main/proto/            (coordinator.proto, gateway.proto)
  │    └── src/main/java/com/razeef/bugbrother/
+ │         ├── config/
+ │         │    └── VectorSearchConfig.java (gRPC channel/stub)
  │         ├── services/
  │         │    ├── DebugWorkerService.java (Kafka Consumer)
  │         │    ├── GitHubService.java
+ │         │    ├── VectorSearchService.java (RAG retrieval/indexing)
  │         │    ├── AiService.java
  │         │    └── CommitService.java
  │         ├── parsers/

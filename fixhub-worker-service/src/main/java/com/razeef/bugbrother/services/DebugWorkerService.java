@@ -24,16 +24,24 @@ public class DebugWorkerService {
     @Autowired
     private VectorSearchService vectorSearchService;
 
+    private static final int RELATED_FILES_LIMIT = 5;
+
     @KafkaListener(topics = "code-guardian-tasks", groupId = "code-guardian-group")
     public void consumeTask(CodeGuardianTask task) {
         System.out.println("Received task for repository: " + task.getOwner() + "/" + task.getRepo());
         try {
 
-            List<CommitService.FixedFile> relatedContext = vectorSearchService.searchRelated(
+            List<CommitService.FixedFile> relatedFiles = vectorSearchService.searchRelated(
                     task.getOwner(), task.getRepo(), task.getToken(),
-                    task.getPayload().getUserQ(), task.getPayload().getFiles(), 5);
+                    task.getPayload().getUserQ(), List.of(), RELATED_FILES_LIMIT);
 
-            String aiResponse = gitAiLayer.askAiDebug(task.getPayload().getFiles(), task.getPayload().getUserQ(), relatedContext);
+            if (relatedFiles.isEmpty()) {
+                System.out.println("No related files found via RAG for " + task.getOwner() + "/" + task.getRepo()
+                        + " -- index the repo first (POST /api/repos/{owner}/{repo}/index) or refine the error description.");
+                return;
+            }
+
+            String aiResponse = gitAiLayer.askAiDebug(relatedFiles, task.getPayload().getUserQ());
 
             if (aiResponse == null || aiResponse.trim().isEmpty()) {
                 System.out.println("No debug response generated from AI.");

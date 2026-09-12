@@ -7,7 +7,8 @@ import lombok.NoArgsConstructor;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class ResponsePayload {
-
-    private String userQ;
+public class IndexRepoTask {
+    private String owner;
+    private String repo;
+    private String token;
 }

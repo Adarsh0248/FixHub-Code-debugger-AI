@@ -26,8 +26,8 @@ public class GitAiDebug {
                                    @RequestBody ResponsePayload payload) {
         try {
             // Input validation
-            if (payload == null || payload.getFiles() == null || payload.getUserQ() == null) {
-                return ResponseEntity.badRequest().body("Invalid payload: files and userQ are required");
+            if (payload == null || payload.getUserQ() == null || payload.getUserQ().trim().isEmpty()) {
+                return ResponseEntity.badRequest().body("Invalid payload: userQ is required");
             }
 
             if (owner == null || owner.trim().isEmpty() || repo == null || repo.trim().isEmpty()) {

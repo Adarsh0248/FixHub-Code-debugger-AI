@@ -140,16 +140,23 @@ recheck §3A and `VECTORSEARCH_GATEWAY_HOST`/`VECTORSEARCH_GATEWAY_PORT`.
 
 1. Open `http://localhost:5173` → **Login with GitHub**
    (`/oauth2/authorization/github`).
-2. Submit a debug task (`POST /debug/{owner}/{repo}` under the hood) with a
-   real repo you own, a `userQ`, and 1+ Java files.
-3. Watch terminal 2: publishes `CodeGuardianTask` to Kafka topic
-   `code-guardian-tasks`, returns `202 Accepted` immediately.
-4. Watch terminal 3 (`code-guardian-group` consumer): picks up the task,
-   calls `VectorSearchService.searchRelated` (gRPC `Gateway.Search`,
-   `client_id = fnv1a64("owner/repo")`) for related-file context, calls the
-   AI, parses fixes, commits to a new `ai-fix/{uuid}` branch via
-   `CommitService`, then calls `indexRepoFiles` (gRPC `Gateway.Insert`, one
-   call per file) to index the repo for next time.
+2. Click **Index repo** for a real repo you own (`POST
+   /api/repos/{owner}/{repo}/index` under the hood). This publishes an
+   `IndexRepoTask` to Kafka topic `code-guardian-index-tasks`; watch terminal
+   3 (`code-guardian-group` consumer, `IndexWorkerService`) fetch every
+   `.java` file in the repo and `Gateway.Insert` each one, `client_id =
+   fnv1a64("owner/repo")`. Do this once per repo (or after a big change) —
+   skipping it means the next step finds nothing.
+3. Paste an error and **Submit for AI fix** (`POST /debug/{owner}/{repo}`
+   under the hood) with just a `userQ` — no files. This publishes a
+   `CodeGuardianTask` to Kafka topic `code-guardian-tasks`, returns `202
+   Accepted` immediately.
+4. Watch terminal 3 (`DebugWorkerService`): picks up the task, calls
+   `VectorSearchService.searchRelated` (gRPC `Gateway.Search`, same
+   `client_id`) using the `userQ` text to find the files to fix — this *is*
+   the file selection, not supplementary context — calls the AI, parses
+   fixes, commits to a new `ai-fix/{uuid}` branch via `CommitService`, then
+   re-indexes the repo (`Gateway.Insert`) so the fix is reflected next time.
 5. Confirm on GitHub: new branch with the committed fixes.
 6. Confirm in Grafana (`http://localhost:3000`, `admin`/`admin`):
    `vsgw_gatewayd_grpc_requests_total` shows `Search` and `Insert` hits from

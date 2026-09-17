@@ -1,4 +1,15 @@
-version: '3.8'
+name: bugbrother
+
+networks:
+  bugbrother:
+    driver: bridge
+  vsgw:
+    external: true
+    name: vsgw
+
+volumes:
+  postgres-data:
+
 services:
   # Single-node KRaft-mode Kafka (no separate Zookeeper container needed).
   kafka:
@@ -19,6 +30,16 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       CLUSTER_ID: ciWo0hqPTliBU3S8IPkK1w
+    restart: unless-stopped
+    networks:
+      - bugbrother
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 || exit 1"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
+
 
   ingestion-service:
     build: 
@@ -27,11 +48,23 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-YOUR_GITHUB_CLIENT_ID}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-YOUR_GITHUB_CLIENT_SECRET}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-YOUR_GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-YOUR_GITHUB_CLIENT_SECRET}
+      FRONTEND_URL: "http://localhost:5173"
+    restart: unless-stopped
+    networks:
+      - bugbrother
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
 
   worker-service:
     build: 
@@ -40,7 +73,61 @@ services:
     ports:
       - "8081:8081"
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - bugbrother
+      - vsgw
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
     environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-YOUR_OPENAI_API_KEY}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-YOUR_OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://router.huggingface.co/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-meta-llama/Llama-3.1-8B-Instruct}
+      VECTORSEARCH_GATEWAY_HOST: gatewayd
+      VECTORSEARCH_GATEWAY_PORT: "50053"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bugbrother}
+      POSTGRES_USER: ${POSTGRES_USER:-bugbrother}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bugbrother-local-only}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - bugbrother
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    networks:
+      - bugbrother
+    depends_on:
+      ingestion-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s

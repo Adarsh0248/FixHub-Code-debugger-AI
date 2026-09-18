@@ -98,29 +98,67 @@ public class VectorSearchService {
         return related;
     }
 
-    public void indexRepoFiles(String owner, String repo, String githubToken) {
+    public IndexResult indexRepoFiles(
+        String owner,
+        String repo,
+        String githubToken
+    ) {
         List<CommitService.FixedFile> files;
+
         try {
-            files = gitHubService.fetchJavaFilesFromRepo(owner, repo, "", githubToken);
-        } catch (Exception e) {
-            log.warn("Could not fetch repo files to index for {}/{}: {}", owner, repo, e.getMessage());
-            return;
+            files = gitHubService.fetchJavaFilesFromRepo(
+                    owner,
+                    repo,
+                    "",
+                    githubToken
+            );
+        } catch (Exception exception) {
+            throw new IllegalStateException(
+                    "Could not fetch repository files",
+                    exception
+            );
         }
 
         long clientId = clientIdFor(owner, repo);
+
+        int submitted = 0;
+        int failed = 0;
+
         for (CommitService.FixedFile file : files) {
             try {
-                gatewayStub.insert(GatewayInsertRequest.newBuilder()
-                        .setKey(GatewayKey.newBuilder()
-                                .setClientId(clientId)
-                                .setLabel(labelFor(file.path()))
-                                .build())
-                        .setText(file.fixedContent())
-                        .build());
-            } catch (StatusRuntimeException e) {
-                log.warn("Failed to index {} for {}/{}, skipping: {}", file.path(), owner, repo, e.getMessage());
+                gatewayStub.insert(
+                        GatewayInsertRequest.newBuilder()
+                                .setKey(
+                                        GatewayKey.newBuilder()
+                                                .setClientId(clientId)
+                                                .setLabel(
+                                                        labelFor(file.path())
+                                                )
+                                                .build()
+                                )
+                                .setText(file.fixedContent())
+                                .build()
+                );
+
+                submitted++;
+            } catch (StatusRuntimeException exception) {
+                failed++;
+
+                log.warn(
+                        "Could not submit {} for {}/{}: {}",
+                        file.path(),
+                        owner,
+                        repo,
+                        exception.getStatus().getCode()
+                );
             }
         }
+
+        return new IndexResult(
+                files.size(),
+                submitted,
+                failed
+        );
     }
 
     private long clientIdFor(String owner, String repo) {
@@ -139,5 +177,12 @@ public class VectorSearchService {
             hash *= prime;
         }
         return hash;
+    }
+
+    public record IndexResult(
+        int totalFiles,
+        int submittedFiles,
+        int failedFiles
+    ) {
     }
 }

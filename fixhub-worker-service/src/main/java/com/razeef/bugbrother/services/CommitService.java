@@ -178,7 +178,24 @@ public class CommitService {
                 }
             }
 
-            System.out.println("Commit summary: " + successCount + " successful, " + failCount + " failed");
+            System.out.println(
+                        "Commit summary: "
+                                + successCount
+                                + " successful, "
+                                + failCount
+                                + " failed"
+                );
+
+                if (failCount > 0) {
+                    throw new IllegalStateException(
+                            "Failed to commit "
+                                    + failCount
+                                    + " of "
+                                    + fixedFiles.size()
+                                    + " corrected file(s)"
+                    );
+                }
+
             System.out.println("AI fixed code committed to branch: " + branchName);
 
         }  catch (WebClientResponseException e) {
@@ -192,6 +209,11 @@ public class CommitService {
                 log.error("2. User doesn't have write access to repository");
                 log.error("3. Repository doesn't exist or is private");
             }
+
+            throw new IllegalStateException(
+                    "GitHub rejected the fix commit",
+                    e
+            );
         }
     }
 

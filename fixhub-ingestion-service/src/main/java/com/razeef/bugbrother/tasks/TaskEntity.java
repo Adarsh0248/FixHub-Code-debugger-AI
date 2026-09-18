@@ -174,9 +174,7 @@ public class TaskEntity {
 
         this.validationSummary = event.validationSummary();
 
-        this.updatedAt = event.occurredAt() == null
-                ? Instant.now()
-                : event.occurredAt();
+        this.updatedAt = Instant.now();
 
         return true;
     }

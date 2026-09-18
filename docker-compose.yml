@@ -50,11 +50,16 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-YOUR_GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-YOUR_GITHUB_CLIENT_SECRET}
       FRONTEND_URL: "http://localhost:5173"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-bugbrother}
+      POSTGRES_USER: ${POSTGRES_USER:-bugbrother}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bugbrother-local-only}
     restart: unless-stopped
     networks:
       - bugbrother

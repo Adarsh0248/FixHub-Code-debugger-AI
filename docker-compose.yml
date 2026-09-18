@@ -60,6 +60,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-bugbrother}
       POSTGRES_USER: ${POSTGRES_USER:-bugbrother}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bugbrother-local-only}
+      INTERNAL_WORKER_KEY: ${INTERNAL_WORKER_KEY:-bugbrother-local-worker-key-change-me}
     restart: unless-stopped
     networks:
       - bugbrother
@@ -98,6 +99,8 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-meta-llama/Llama-3.1-8B-Instruct}
       VECTORSEARCH_GATEWAY_HOST: gatewayd
       VECTORSEARCH_GATEWAY_PORT: "50053"
+      INGESTION_INTERNAL_URL: http://ingestion-service:8080
+      INTERNAL_WORKER_KEY: ${INTERNAL_WORKER_KEY:-bugbrother-local-worker-key-change-me}
 
   postgres:
     image: postgres:17-alpine

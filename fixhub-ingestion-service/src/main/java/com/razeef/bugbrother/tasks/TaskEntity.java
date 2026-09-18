@@ -94,33 +94,43 @@ public class TaskEntity {
     private Instant updatedAt;
 
     public static TaskEntity queued(
-            TaskType taskType,
-            String userId,
-            String owner,
-            String repo,
-            String requestSummary
-    ) {
-        TaskEntity task = new TaskEntity();
+        TaskType taskType,
+        String userId,
 
-        Instant now = Instant.now();
+        Long repositoryId,
+        String owner,
+        String repo,
+        String branch,
+        String baseCommitSha,
 
-        task.taskId = UUID.randomUUID();
-        task.taskType = taskType;
-        task.userId = userId;
-        task.owner = owner;
-        task.repo = repo;
-        task.requestSummary = requestSummary;
+        String requestSummary
+) {
+    TaskEntity task = new TaskEntity();
 
-        task.status = TaskStatus.QUEUED;
-        task.stage = TaskStage.QUEUED;
-        task.eventSequence = 0;
-        task.statusMessage = "Waiting for a worker";
+    Instant now = Instant.now();
 
-        task.createdAt = now;
-        task.updatedAt = now;
+    task.taskId = UUID.randomUUID();
+    task.taskType = taskType;
+    task.userId = userId;
 
-        return task;
-    }
+    task.repositoryId = repositoryId;
+    task.owner = owner;
+    task.repo = repo;
+    task.branch = branch;
+    task.baseCommitSha = baseCommitSha;
+
+    task.requestSummary = requestSummary;
+
+    task.status = TaskStatus.QUEUED;
+    task.stage = TaskStage.QUEUED;
+    task.eventSequence = 0;
+    task.statusMessage = "Waiting for a worker";
+
+    task.createdAt = now;
+    task.updatedAt = now;
+
+    return task;
+}
 
     public void markPublicationFailed(String errorMessage) {
     if (status.isTerminal()) {

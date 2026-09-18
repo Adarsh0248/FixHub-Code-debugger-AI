@@ -7,8 +7,12 @@ public record TaskResponse(
         UUID taskId,
         TaskType taskType,
 
+        Long repositoryId,
         String owner,
         String repo,
+        String branch,
+        String baseCommitSha,
+
         String requestSummary,
 
         TaskStatus status,
@@ -31,13 +35,20 @@ public record TaskResponse(
         Instant createdAt,
         Instant updatedAt
 ) {
-    public static TaskResponse from(TaskEntity task) {
+
+    public static TaskResponse from(
+            TaskEntity task
+    ) {
         return new TaskResponse(
                 task.getTaskId(),
                 task.getTaskType(),
 
+                task.getRepositoryId(),
                 task.getOwner(),
                 task.getRepo(),
+                task.getBranch(),
+                task.getBaseCommitSha(),
+
                 task.getRequestSummary(),
 
                 task.getStatus(),

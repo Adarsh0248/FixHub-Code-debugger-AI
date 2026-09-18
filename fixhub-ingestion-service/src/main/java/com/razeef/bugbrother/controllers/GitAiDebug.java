@@ -2,6 +2,8 @@ package com.razeef.bugbrother.controllers;
 
 import com.razeef.bugbrother.events.DebugRepositoryCommandV1;
 import com.razeef.bugbrother.models.ResponsePayload;
+import com.razeef.bugbrother.repositories.RepositoryResponse;
+import com.razeef.bugbrother.repositories.RepositorySelectionService;
 import com.razeef.bugbrother.services.GitAuthService;
 import com.razeef.bugbrother.tasks.TaskAcceptedResponse;
 import com.razeef.bugbrother.tasks.TaskCommandPublisher;
@@ -30,15 +32,19 @@ public class GitAiDebug {
             "code-guardian-tasks";
 
     private final GitAuthService gitAuthService;
+    private final RepositorySelectionService repositorySelectionService;
     private final TaskService taskService;
     private final TaskCommandPublisher commandPublisher;
 
     public GitAiDebug(
             GitAuthService gitAuthService,
+            RepositorySelectionService repositorySelectionService,
             TaskService taskService,
             TaskCommandPublisher commandPublisher
     ) {
         this.gitAuthService = gitAuthService;
+        this.repositorySelectionService =
+                repositorySelectionService;
         this.taskService = taskService;
         this.commandPublisher = commandPublisher;
     }
@@ -52,33 +58,34 @@ public class GitAiDebug {
         if (payload == null
                 || payload.getUserQ() == null
                 || payload.getUserQ().isBlank()) {
-            return ResponseEntity.badRequest()
-                    .body("Invalid payload: userQ is required");
+            return ResponseEntity
+                    .badRequest()
+                    .body(
+                            "Invalid payload: userQ is required"
+                    );
         }
 
-        if (owner == null || owner.isBlank()
-                || repo == null || repo.isBlank()) {
-            return ResponseEntity.badRequest()
-                    .body("Owner and repository name cannot be empty");
-        }
+        String errorQuery =
+                payload.getUserQ().trim();
 
-        String normalizedOwner = owner.trim();
-        String normalizedRepo = repo.trim();
-        String errorQuery = payload.getUserQ().trim();
+        RepositoryResponse repository =
+                repositorySelectionService.resolveRepository(
+                        owner,
+                        repo
+                );
 
-        final String githubToken;
-
-        try {
-            githubToken = gitAuthService.getGitHubAccessToken();
-        } catch (IllegalStateException exception) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(exception.getMessage());
-        }
+        String githubToken =
+                gitAuthService.getGitHubAccessToken();
 
         TaskEntity task = taskService.createQueuedTask(
                 TaskType.DEBUG_REPOSITORY,
-                normalizedOwner,
-                normalizedRepo,
+
+                repository.repositoryId(),
+                repository.owner(),
+                repository.name(),
+                repository.selectedBranch(),
+                repository.commitSha(),
+
                 errorQuery
         );
 
@@ -88,11 +95,11 @@ public class GitAiDebug {
                         task.getTaskId(),
                         task.getUserId(),
 
-                        null,
-                        normalizedOwner,
-                        normalizedRepo,
-                        null,
-                        null,
+                        repository.repositoryId(),
+                        repository.owner(),
+                        repository.name(),
+                        repository.selectedBranch(),
+                        repository.commitSha(),
 
                         errorQuery,
                         githubToken,
@@ -106,7 +113,8 @@ public class GitAiDebug {
                     command
             );
         } catch (TaskPublicationException exception) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity
+                    .status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(new TaskAcceptedResponse(
                             task.getTaskId(),
                             TaskStatus.FAILED,
@@ -114,19 +122,25 @@ public class GitAiDebug {
                     ));
         }
 
-        return ResponseEntity.accepted()
+        return ResponseEntity
+                .accepted()
                 .body(taskService.acceptedResponse(task));
     }
 
     @GetMapping("/home")
     public ResponseEntity<String> home() {
         Authentication authentication =
-                SecurityContextHolder.getContext().getAuthentication();
+                SecurityContextHolder
+                        .getContext()
+                        .getAuthentication();
 
         if (authentication == null
                 || !authentication.isAuthenticated()
-                || "anonymousUser".equals(authentication.getName())) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                || "anonymousUser".equals(
+                        authentication.getName()
+                )) {
+            return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
                     .body("Authentication required");
         }
 

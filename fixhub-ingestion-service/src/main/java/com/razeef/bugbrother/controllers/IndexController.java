@@ -1,6 +1,8 @@
 package com.razeef.bugbrother.controllers;
 
 import com.razeef.bugbrother.events.IndexRepositoryCommandV1;
+import com.razeef.bugbrother.repositories.RepositoryResponse;
+import com.razeef.bugbrother.repositories.RepositorySelectionService;
 import com.razeef.bugbrother.services.GitAuthService;
 import com.razeef.bugbrother.tasks.TaskAcceptedResponse;
 import com.razeef.bugbrother.tasks.TaskCommandPublisher;
@@ -27,15 +29,19 @@ public class IndexController {
             "code-guardian-index-tasks";
 
     private final GitAuthService gitAuthService;
+    private final RepositorySelectionService repositorySelectionService;
     private final TaskService taskService;
     private final TaskCommandPublisher commandPublisher;
 
     public IndexController(
             GitAuthService gitAuthService,
+            RepositorySelectionService repositorySelectionService,
             TaskService taskService,
             TaskCommandPublisher commandPublisher
     ) {
         this.gitAuthService = gitAuthService;
+        this.repositorySelectionService =
+                repositorySelectionService;
         this.taskService = taskService;
         this.commandPublisher = commandPublisher;
     }
@@ -45,28 +51,24 @@ public class IndexController {
             @PathVariable String owner,
             @PathVariable String repo
     ) {
-        if (owner == null || owner.isBlank()
-                || repo == null || repo.isBlank()) {
-            return ResponseEntity.badRequest()
-                    .body("Owner and repository name cannot be empty");
-        }
+        RepositoryResponse repository =
+                repositorySelectionService.resolveRepository(
+                        owner,
+                        repo
+                );
 
-        String normalizedOwner = owner.trim();
-        String normalizedRepo = repo.trim();
-
-        final String githubToken;
-
-        try {
-            githubToken = gitAuthService.getGitHubAccessToken();
-        } catch (IllegalStateException exception) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(exception.getMessage());
-        }
+        String githubToken =
+                gitAuthService.getGitHubAccessToken();
 
         TaskEntity task = taskService.createQueuedTask(
                 TaskType.INDEX_REPOSITORY,
-                normalizedOwner,
-                normalizedRepo,
+
+                repository.repositoryId(),
+                repository.owner(),
+                repository.name(),
+                repository.selectedBranch(),
+                repository.commitSha(),
+
                 null
         );
 
@@ -76,11 +78,11 @@ public class IndexController {
                         task.getTaskId(),
                         task.getUserId(),
 
-                        null,
-                        normalizedOwner,
-                        normalizedRepo,
-                        null,
-                        null,
+                        repository.repositoryId(),
+                        repository.owner(),
+                        repository.name(),
+                        repository.selectedBranch(),
+                        repository.commitSha(),
 
                         githubToken,
                         Instant.now()
@@ -93,7 +95,8 @@ public class IndexController {
                     command
             );
         } catch (TaskPublicationException exception) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity
+                    .status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(new TaskAcceptedResponse(
                             task.getTaskId(),
                             TaskStatus.FAILED,
@@ -101,7 +104,8 @@ public class IndexController {
                     ));
         }
 
-        return ResponseEntity.accepted()
+        return ResponseEntity
+                .accepted()
                 .body(taskService.acceptedResponse(task));
     }
 }

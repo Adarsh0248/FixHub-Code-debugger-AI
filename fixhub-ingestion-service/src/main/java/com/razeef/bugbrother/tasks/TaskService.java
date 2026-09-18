@@ -27,24 +27,35 @@ public class TaskService {
     }
 
     @Transactional
-    public TaskEntity createQueuedTask(
-            TaskType taskType,
-            String owner,
-            String repo,
-            String requestSummary
-    ) {
-        String userId = currentUserService.requireUserId();
+public TaskEntity createQueuedTask(
+        TaskType taskType,
 
-        TaskEntity task = TaskEntity.queued(
-                taskType,
-                userId,
-                owner,
-                repo,
-                requestSummary
-        );
+        Long repositoryId,
+        String owner,
+        String repo,
+        String branch,
+        String baseCommitSha,
 
-        return taskRepository.save(task);
-    }
+        String requestSummary
+) {
+    String userId =
+            currentUserService.requireUserId();
+
+    TaskEntity task = TaskEntity.queued(
+            taskType,
+            userId,
+
+            repositoryId,
+            owner,
+            repo,
+            branch,
+            baseCommitSha,
+
+            requestSummary
+    );
+
+    return taskRepository.save(task);
+}
 
     @Transactional
     public void markPublicationFailed(

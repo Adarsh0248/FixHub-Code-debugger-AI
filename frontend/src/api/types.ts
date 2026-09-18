@@ -29,9 +29,12 @@ export interface TaskAcceptedResponse {
 export interface TaskResponse {
   taskId: string;
   taskType: TaskType;
-
+  repositoryId: number;
   owner: string;
   repo: string;
+  branch: string;
+  baseCommitSha: string;
+
   requestSummary: string | null;
 
   status: TaskStatus;

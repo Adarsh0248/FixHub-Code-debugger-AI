@@ -26,6 +26,24 @@ export interface TaskAcceptedResponse {
   statusUrl: string;
 }
 
+export type TaskStage =
+  | 'QUEUED'
+  | 'STARTING'
+  | 'FETCHING'
+  | 'CHUNKING'
+  | 'STORING_MANIFEST'
+  | 'SUBMITTING'
+  | 'WAITING_FOR_INDEX'
+  | 'RETRIEVING'
+  | 'GENERATING'
+  | 'COMMITTING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'PUBLICATION_FAILED'
+  | 'WORKER_TIMEOUT';
+
+
+
 export interface TaskResponse {
   taskId: string;
   taskType: TaskType;
@@ -34,11 +52,11 @@ export interface TaskResponse {
   repo: string;
   branch: string;
   baseCommitSha: string;
-
+  generationId: string | null;
   requestSummary: string | null;
 
   status: TaskStatus;
-  stage: string;
+  stage: TaskStage;
   eventSequence: number;
 
   progressCurrent: number | null;

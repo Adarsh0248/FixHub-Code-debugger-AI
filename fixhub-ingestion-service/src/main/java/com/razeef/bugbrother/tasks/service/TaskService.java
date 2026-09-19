@@ -37,35 +37,37 @@ public class TaskService {
     }
 
     @Transactional
-public TaskEntity createQueuedTask(
-        TaskType taskType,
+        public TaskEntity createQueuedTask(
+                TaskType taskType,
 
-        Long repositoryId,
-        String owner,
-        String repo,
-        String branch,
-        String baseCommitSha,
+                Long repositoryId,
+                String owner,
+                String repo,
+                String branch,
+                String baseCommitSha,
+                UUID generationId,
 
-        String requestSummary
-) {
-    String userId =
-            currentUserService.requireUserId();
+                String requestSummary
+        ) {
+        String userId =
+                currentUserService.requireUserId();
 
-    TaskEntity task = TaskEntity.queued(
-            taskType,
-            userId,
+        TaskEntity task = TaskEntity.queued(
+                taskType,
+                userId,
 
-            repositoryId,
-            owner,
-            repo,
-            branch,
-            baseCommitSha,
+                repositoryId,
+                owner,
+                repo,
+                branch,
+                baseCommitSha,
+                generationId,
 
-            requestSummary
-    );
+                requestSummary
+        );
 
-    return taskRepository.save(task);
-}
+        return taskRepository.save(task);
+        }
 
     @Transactional
     public void markPublicationFailed(

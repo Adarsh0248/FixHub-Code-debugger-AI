@@ -5,11 +5,13 @@ public enum IndexGenerationStatus {
     BUILDING,
     READY,
     FAILED,
+    CLEANING,
     RETIRED;
 
     public boolean isTerminal() {
         return this == READY
                 || this == FAILED
+                || this == CLEANING
                 || this == RETIRED;
     }
 

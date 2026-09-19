@@ -73,6 +73,9 @@ public class IndexGenerationEntity {
     @Column(name = "failed_chunks", nullable = false)
     private int failedChunks;
 
+    @Column(name = "vector_submission_started", nullable = false)
+    private boolean vectorSubmissionStarted;
+
     @Column(name = "failure_code", length = 128)
     private String failureCode;
 
@@ -144,6 +147,7 @@ public class IndexGenerationEntity {
         generation.expectedChunks = 0;
         generation.indexedChunks = 0;
         generation.failedChunks = 0;
+        generation.vectorSubmissionStarted = false;
 
         generation.createdAt = now;
         generation.updatedAt = now;
@@ -254,6 +258,27 @@ public class IndexGenerationEntity {
         );
         failedAt = now;
         updatedAt = now;
+    }
+
+    public void beginCleanup() {
+        if (status == IndexGenerationStatus.CLEANING) {
+            return;
+        }
+
+        if (status != IndexGenerationStatus.FAILED) {
+            throw new IllegalStateException(
+                    "Only a failed generation can be cleaned"
+            );
+        }
+
+        status = IndexGenerationStatus.CLEANING;
+        updatedAt = Instant.now();
+    }
+
+    public void markVectorSubmissionStarted() {
+        requireBuilding();
+        vectorSubmissionStarted = true;
+        updatedAt = Instant.now();
     }
 
     public void retire() {

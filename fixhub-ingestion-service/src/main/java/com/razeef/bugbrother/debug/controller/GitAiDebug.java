@@ -85,6 +85,7 @@ public class GitAiDebug {
                 repository.name(),
                 repository.selectedBranch(),
                 repository.commitSha(),
+                null,
 
                 errorQuery
         );

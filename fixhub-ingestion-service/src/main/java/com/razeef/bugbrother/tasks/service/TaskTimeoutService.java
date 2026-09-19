@@ -1,7 +1,6 @@
 package com.razeef.bugbrother.tasks.service;
 
-import com.razeef.bugbrother.tasks.model.TaskEntity;
-import com.razeef.bugbrother.tasks.repository.TaskRepository;
+import com.razeef.bugbrother.indexes.service.IndexGenerationService;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,25 +11,16 @@ import java.util.UUID;
 @Service
 public class TaskTimeoutService {
 
-    private final TaskRepository taskRepository;
+    private final IndexGenerationService generationService;
 
-    public TaskTimeoutService(TaskRepository taskRepository) {
-        this.taskRepository = taskRepository;
+    public TaskTimeoutService(
+            IndexGenerationService generationService
+    ) {
+        this.generationService = generationService;
     }
 
     @Transactional
     public boolean failIfStale(UUID taskId, Instant cutoff) {
-        TaskEntity task = taskRepository
-                .findLockedByTaskId(taskId)
-                .orElse(null);
-
-        if (task == null
-                || task.getStatus().isTerminal()
-                || !task.getUpdatedAt().isBefore(cutoff)) {
-            return false;
-        }
-
-        task.markWorkerTimeout();
-        return true;
+        return generationService.failTimedOutTask(taskId, cutoff);
     }
 }

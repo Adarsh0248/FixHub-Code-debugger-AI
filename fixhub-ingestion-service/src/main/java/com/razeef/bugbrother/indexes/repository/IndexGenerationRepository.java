@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.Collection;
+import java.util.List;
 
 public interface IndexGenerationRepository
         extends JpaRepository<IndexGenerationEntity, UUID> {
@@ -37,6 +38,10 @@ public interface IndexGenerationRepository
             """)
     Optional<IndexGenerationEntity> findLockedByGenerationId(
             @Param("generationId") UUID generationId
+    );
+
+    List<IndexGenerationEntity> findByStatusOrderByUpdatedAtAsc(
+            IndexGenerationStatus status
     );
 }
 

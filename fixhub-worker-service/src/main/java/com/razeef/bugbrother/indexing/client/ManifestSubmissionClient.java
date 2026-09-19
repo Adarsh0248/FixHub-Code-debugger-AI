@@ -9,7 +9,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
-
+import com.razeef.bugbrother.indexing.model.PreparedChunkSubmission;
+import com.razeef.bugbrother.indexing.model.IndexCleanupPlan;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -158,6 +159,127 @@ public class ManifestSubmissionClient {
         );
     }
 
+    public void registerSubmissions(
+        UUID generationId,
+        List<PreparedChunkSubmission> submissions
+        ) {
+        if (generationId == null) {
+                throw new IllegalArgumentException(
+                        "generationId is required"
+                );
+        }
+
+        if (submissions == null || submissions.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "At least one submission is required"
+                );
+        }
+
+        List<SubmissionPayload> payloads =
+                submissions.stream()
+                        .map(submission ->
+                                new SubmissionPayload(
+                                        submission
+                                                .chunk()
+                                                .chunkId(),
+                                        submission
+                                                .submissionEventId()
+                                )
+                        )
+                        .toList();
+
+        submitBatches(
+                payloads,
+                CHUNK_BATCH_SIZE,
+                batch -> {
+                        post(
+                                "/internal/index-generations/"
+                                        + generationId
+                                        + "/submissions",
+                                new SubmissionsRequest(batch)
+                        );
+
+                        return null;
+                }
+        );
+        }
+
+
+    public void failGeneration(
+        UUID generationId,
+        String errorCode,
+        String errorMessage,
+        boolean vectorsMayExist
+        ) {
+        if (generationId == null) {
+                throw new IllegalArgumentException(
+                        "generationId is required"
+                );
+        }
+
+        post(
+                "/internal/index-generations/"
+                        + generationId
+                        + "/fail",
+                new FailureRequest(
+                        errorCode,
+                        errorMessage,
+                        vectorsMayExist
+                )
+        );
+        }
+
+    public void discardPreparedGeneration(UUID generationId) {
+        postWithoutBody(
+                "/internal/index-generations/"
+                        + generationId
+                        + "/discard-prepared"
+        );
+    }
+
+    public void markVectorSubmissionStarted(UUID generationId) {
+        postWithoutBody(
+                "/internal/index-generations/"
+                        + generationId
+                        + "/submission-started"
+        );
+    }
+
+    public IndexCleanupPlan fetchCleanupPlan(UUID generationId) {
+        try {
+            return webClient.get()
+                    .uri("/internal/index-generations/"
+                            + generationId
+                            + "/cleanup-plan")
+                    .header(WORKER_KEY_HEADER, workerKey)
+                    .retrieve()
+                    .bodyToMono(IndexCleanupPlan.class)
+                    .block();
+        } catch (WebClientResponseException exception) {
+            throw new ManifestSubmissionException(
+                    "Ingestion rejected cleanup plan request with HTTP "
+                            + exception.getStatusCode().value(),
+                    exception
+            );
+        } catch (RuntimeException exception) {
+            throw new ManifestSubmissionException(
+                    "Could not fetch index cleanup plan",
+                    exception
+            );
+        }
+    }
+
+    public void completeCleanup(UUID generationId) {
+        postWithoutBody(
+                "/internal/index-generations/"
+                        + generationId
+                        + "/cleanup-complete"
+        );
+    }
+
+
+
+
     private <T> void submitBatches(
             List<T> items,
             int batchSize,
@@ -208,6 +330,28 @@ public class ManifestSubmissionClient {
         }
     }
 
+    private void postWithoutBody(String path) {
+        try {
+            webClient.post()
+                    .uri(path)
+                    .header(WORKER_KEY_HEADER, workerKey)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+        } catch (WebClientResponseException exception) {
+            throw new ManifestSubmissionException(
+                    "Ingestion rejected cleanup request with HTTP "
+                            + exception.getStatusCode().value(),
+                    exception
+            );
+        } catch (RuntimeException exception) {
+            throw new ManifestSubmissionException(
+                    "Could not complete index cleanup request",
+                    exception
+            );
+        }
+    }
+
     private record FilesRequest(
             List<FilePayload> files
     ) {
@@ -234,6 +378,13 @@ public class ManifestSubmissionClient {
     ) {
     }
 
+    private record FailureRequest(
+        String errorCode,
+        String errorMessage,
+        boolean vectorsMayExist
+        ) {
+        }
+
     private record ChunkPayload(
             String filePath,
 
@@ -255,4 +406,15 @@ public class ManifestSubmissionClient {
             String embeddingText
     ) {
     }
+
+    private record SubmissionsRequest(
+        List<SubmissionPayload> submissions
+        ) {
+        }
+
+private record SubmissionPayload(
+        String chunkId,
+        UUID submissionEventId
+        ) {
+        }
 }

@@ -23,7 +23,7 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://workflow-kafka:29092,PLAINTEXT_HOST://localhost:9094
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
@@ -32,7 +32,8 @@ services:
       CLUSTER_ID: ciWo0hqPTliBU3S8IPkK1w
     restart: unless-stopped
     networks:
-      - bugbrother
+      bugbrother:
+        aliases: [workflow-kafka]
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 || exit 1"]
       interval: 15s
@@ -53,7 +54,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: workflow-kafka:29092
+      VECTOR_RESULT_KAFKA_BOOTSTRAP_SERVERS: vector-kafka:9092
+      VECTOR_RESULT_TOPIC: vector-index-results
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-YOUR_GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-YOUR_GITHUB_CLIENT_SECRET}
       FRONTEND_URL: "http://localhost:5173"
@@ -64,6 +67,7 @@ services:
     restart: unless-stopped
     networks:
       - bugbrother
+      - vsgw
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -93,7 +97,7 @@ services:
       start_period: 60s
 
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: workflow-kafka:29092
       OPENAI_API_KEY: ${OPENAI_API_KEY:-YOUR_OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://router.huggingface.co/v1}
       OPENAI_MODEL: ${OPENAI_MODEL:-meta-llama/Llama-3.1-8B-Instruct}

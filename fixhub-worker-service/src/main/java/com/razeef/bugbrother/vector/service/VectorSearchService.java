@@ -2,18 +2,20 @@ package com.razeef.bugbrother.vector.service;
 
 import com.razeef.bugbrother.github.service.CommitService;
 import com.razeef.bugbrother.github.service.GitHubService;
-
+import com.razeef.bugbrother.chunking.model.RepositoryChunk;
 import com.razeef.bugbrother.grpc.gateway.GatewayGrpc;
 import com.razeef.bugbrother.grpc.gateway.GatewayInsertRequest;
 import com.razeef.bugbrother.grpc.gateway.GatewayKey;
 import com.razeef.bugbrother.grpc.gateway.GatewayScoredResult;
 import com.razeef.bugbrother.grpc.gateway.GatewaySearchRequest;
 import com.razeef.bugbrother.grpc.gateway.GatewaySearchResponse;
+import com.razeef.bugbrother.grpc.gateway.GatewayDeleteRequest;
 import io.grpc.StatusRuntimeException;
+import io.grpc.Status;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
+import com.razeef.bugbrother.indexing.model.PreparedChunkSubmission;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,6 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Retrieval-augmented context for the AI debug prompt, backed by the
@@ -164,6 +167,168 @@ public class VectorSearchService {
         );
     }
 
+
+    public ChunkSubmissionResult submitChunks(
+        String vectorClientId,
+        List<PreparedChunkSubmission> submissions
+    ) {
+        if (vectorClientId == null
+                || vectorClientId.isBlank()) {
+            throw new IllegalArgumentException(
+                    "vectorClientId is required"
+            );
+        }
+
+        if (submissions == null
+                || submissions.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "At least one submission is required"
+            );
+        }
+
+        long clientId;
+
+        try {
+            clientId = Long.parseUnsignedLong(
+                    vectorClientId
+            );
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(
+                    "vectorClientId must be an unsigned 64-bit value",
+                    exception
+            );
+        }
+
+        int submitted = 0;
+
+        for (PreparedChunkSubmission submission :
+                submissions) {
+            RepositoryChunk chunk =
+                    submission.chunk();
+
+            try {
+                gatewayStub.insert(
+                        GatewayInsertRequest.newBuilder()
+                                .setKey(
+                                        GatewayKey.newBuilder()
+                                                .setClientId(clientId)
+                                                .setLabel(
+                                                        chunk.vectorLabel()
+                                                )
+                                                .build()
+                                )
+                                .setText(
+                                        chunk.embeddingText()
+                                )
+                                .setCorrelationId(
+                                        submission
+                                                .submissionEventId()
+                                                .toString()
+                                )
+                                .build()
+                );
+
+                submitted++;
+            } catch (StatusRuntimeException exception) {
+                throw new IllegalStateException(
+                        "Gateway rejected chunk "
+                                + chunk.chunkId()
+                                + " from "
+                                + chunk.path()
+                                + ": "
+                                + exception
+                                        .getStatus()
+                                        .getCode(),
+                        exception
+                );
+            }
+        }
+
+        return new ChunkSubmissionResult(
+                submissions.size(),
+                submitted
+        );
+    }
+
+    public void deleteVectors(
+            String vectorClientId,
+            List<String> vectorLabels,
+            UUID cleanupEventId
+    ) {
+        if (vectorClientId == null || vectorClientId.isBlank()) {
+            throw new IllegalArgumentException(
+                    "vectorClientId is required"
+            );
+        }
+
+        long clientId;
+        try {
+            clientId = Long.parseUnsignedLong(vectorClientId);
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(
+                    "vectorClientId must be an unsigned 64-bit value",
+                    exception
+            );
+        }
+
+        if (vectorLabels == null) {
+            throw new IllegalArgumentException(
+                    "vectorLabels are required"
+            );
+        }
+
+        for (String vectorLabel : vectorLabels) {
+            long label;
+            try {
+                label = Long.parseUnsignedLong(vectorLabel);
+            } catch (NumberFormatException exception) {
+                throw new IllegalArgumentException(
+                        "Invalid vector label: " + vectorLabel,
+                        exception
+                );
+            }
+
+            GatewayDeleteRequest request =
+                    GatewayDeleteRequest.newBuilder()
+                            .setKey(GatewayKey.newBuilder()
+                                    .setClientId(clientId)
+                                    .setLabel(label)
+                                    .build())
+                            .setCorrelationId(
+                                    cleanupEventId + ":" + vectorLabel
+                            )
+                            .build();
+
+            deleteWithRateLimitRetry(request);
+        }
+    }
+
+    private void deleteWithRateLimitRetry(
+            GatewayDeleteRequest request
+    ) {
+        while (true) {
+            try {
+                gatewayStub.delete(request);
+                return;
+            } catch (StatusRuntimeException exception) {
+                if (exception.getStatus().getCode()
+                        != Status.Code.RESOURCE_EXHAUSTED) {
+                    throw exception;
+                }
+
+                try {
+                    Thread.sleep(1100);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(
+                            "Interrupted while waiting to retry vector deletion",
+                            interrupted
+                    );
+                }
+            }
+        }
+    }
+
     private long clientIdFor(String owner, String repo) {
         return fnv1a64(owner + "/" + repo);
     }
@@ -188,4 +353,12 @@ public class VectorSearchService {
         int failedFiles
     ) {
     }
+
+
+    public record ChunkSubmissionResult(
+        int totalChunks,
+        int submittedChunks
+    ) {
+    }
+
 }

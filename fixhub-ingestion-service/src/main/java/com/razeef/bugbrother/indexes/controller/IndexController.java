@@ -1,16 +1,19 @@
 package com.razeef.bugbrother.indexes.controller;
 
-import com.razeef.bugbrother.events.IndexRepositoryCommandV1;
+import com.razeef.bugbrother.auth.service.GitAuthService;
+import com.razeef.bugbrother.events.IndexRepositoryCommandV2;
+import com.razeef.bugbrother.indexes.dto.response.IndexGenerationAllocation;
+import com.razeef.bugbrother.indexes.service.IndexGenerationService;
 import com.razeef.bugbrother.repositories.dto.response.RepositoryResponse;
 import com.razeef.bugbrother.repositories.service.RepositorySelectionService;
-import com.razeef.bugbrother.auth.service.GitAuthService;
 import com.razeef.bugbrother.tasks.dto.response.TaskAcceptedResponse;
+import com.razeef.bugbrother.tasks.exception.TaskPublicationException;
 import com.razeef.bugbrother.tasks.messaging.TaskCommandPublisher;
 import com.razeef.bugbrother.tasks.model.TaskEntity;
-import com.razeef.bugbrother.tasks.exception.TaskPublicationException;
-import com.razeef.bugbrother.tasks.service.TaskService;
 import com.razeef.bugbrother.tasks.model.TaskStatus;
 import com.razeef.bugbrother.tasks.model.TaskType;
+import com.razeef.bugbrother.tasks.service.TaskService;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,18 +33,21 @@ public class IndexController {
 
     private final GitAuthService gitAuthService;
     private final RepositorySelectionService repositorySelectionService;
+    private final IndexGenerationService generationService;
     private final TaskService taskService;
     private final TaskCommandPublisher commandPublisher;
 
     public IndexController(
             GitAuthService gitAuthService,
             RepositorySelectionService repositorySelectionService,
+            IndexGenerationService generationService,
             TaskService taskService,
             TaskCommandPublisher commandPublisher
     ) {
         this.gitAuthService = gitAuthService;
         this.repositorySelectionService =
                 repositorySelectionService;
+        this.generationService = generationService;
         this.taskService = taskService;
         this.commandPublisher = commandPublisher;
     }
@@ -57,6 +63,9 @@ public class IndexController {
                         repo
                 );
 
+        IndexGenerationAllocation generation =
+                generationService.allocate(repository);
+
         String githubToken =
                 gitAuthService.getGitHubAccessToken();
 
@@ -68,21 +77,32 @@ public class IndexController {
                 repository.name(),
                 repository.selectedBranch(),
                 repository.commitSha(),
+                generation.generationId(),
 
                 null
         );
 
-        IndexRepositoryCommandV1 command =
-                new IndexRepositoryCommandV1(
+        IndexRepositoryCommandV2 command =
+                new IndexRepositoryCommandV2(
                         UUID.randomUUID(),
                         task.getTaskId(),
                         task.getUserId(),
+
+                        generation.generationId(),
 
                         repository.repositoryId(),
                         repository.owner(),
                         repository.name(),
                         repository.selectedBranch(),
                         repository.commitSha(),
+
+                        generation.vectorClientId(),
+                        generation.modelId(),
+                        generation.embeddingDimension(),
+                        generation.chunkerVersion(),
+
+                        generation.status().name(),
+                        generation.buildRequired(),
 
                         githubToken,
                         Instant.now()
@@ -95,6 +115,12 @@ public class IndexController {
                     command
             );
         } catch (TaskPublicationException exception) {
+            if (generation.buildRequired()) {
+                generationService.discardPreparedGeneration(
+                        generation.generationId()
+                );
+            }
+
             return ResponseEntity
                     .status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(new TaskAcceptedResponse(

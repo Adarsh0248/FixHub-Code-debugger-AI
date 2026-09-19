@@ -5,6 +5,11 @@ public enum TaskStage {
     STARTING,
 
     FETCHING,
+    CHUNKING,
+    STORING_MANIFEST,
+    SUBMITTING,
+    WAITING_FOR_INDEX,
+
     RETRIEVING,
     GENERATING,
     COMMITTING,

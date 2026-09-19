@@ -17,6 +17,7 @@ public record TaskResponse(
         String repo,
         String branch,
         String baseCommitSha,
+        UUID generationId,
 
         String requestSummary,
 
@@ -53,7 +54,7 @@ public record TaskResponse(
                 task.getRepo(),
                 task.getBranch(),
                 task.getBaseCommitSha(),
-
+                task.getGenerationId(),
                 task.getRequestSummary(),
 
                 task.getStatus(),

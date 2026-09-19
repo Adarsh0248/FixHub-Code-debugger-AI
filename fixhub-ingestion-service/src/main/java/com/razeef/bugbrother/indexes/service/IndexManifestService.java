@@ -10,7 +10,7 @@ import com.razeef.bugbrother.indexes.model.IndexGenerationStatus;
 import com.razeef.bugbrother.indexes.repository.IndexedChunkRepository;
 import com.razeef.bugbrother.indexes.repository.IndexedSourceFileRepository;
 import com.razeef.bugbrother.indexes.repository.IndexGenerationRepository;
-
+import com.razeef.bugbrother.indexes.dto.request.ChunkSubmissionInput;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -184,6 +184,82 @@ public class IndexManifestService {
 
         return inserted;
     }
+
+
+
+    @Transactional
+        public int registerSubmissions(
+                UUID generationId,
+                List<ChunkSubmissionInput> inputs
+        ) {
+        requireBuildingGeneration(generationId);
+
+        if (inputs == null || inputs.isEmpty()) {
+                return 0;
+        }
+
+        int registered = 0;
+
+        for (ChunkSubmissionInput input : inputs) {
+                if (input == null) {
+                throw new IllegalArgumentException(
+                        "Submission entry is required"
+                );
+                }
+
+                if (input.chunkId() == null
+                        || input.chunkId().isBlank()) {
+                throw new IllegalArgumentException(
+                        "chunkId is required"
+                );
+                }
+
+                if (input.submissionEventId() == null) {
+                throw new IllegalArgumentException(
+                        "submissionEventId is required"
+                );
+                }
+
+                IndexedChunkEntity chunk =
+                        chunkRepository
+                                .findByGenerationIdAndChunkId(
+                                        generationId,
+                                        input.chunkId()
+                                )
+                                .orElseThrow(() ->
+                                        new IllegalArgumentException(
+                                                "Manifest chunk does not exist: "
+                                                        + input.chunkId()
+                                        )
+                                );
+
+                IndexedChunkEntity existingSubmission =
+                        chunkRepository
+                                .findBySubmissionEventId(
+                                        input.submissionEventId()
+                                )
+                                .orElse(null);
+
+                if (existingSubmission != null
+                        && !existingSubmission
+                                .getChunkRowId()
+                                .equals(chunk.getChunkRowId())) {
+                throw new IllegalStateException(
+                        "Submission event ID is already assigned "
+                                + "to another chunk: "
+                                + input.submissionEventId()
+                );
+                }
+
+                if (chunk.markSubmitted(
+                        input.submissionEventId()
+                )) {
+                registered++;
+                }
+        }
+
+        return registered;
+        }
 
     @Transactional
     public ManifestRegistrationResult completeManifest(

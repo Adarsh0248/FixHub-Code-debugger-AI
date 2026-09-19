@@ -49,4 +49,34 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
     Optional<TaskEntity> findLockedByTaskId(
             @Param("taskId") UUID taskId
     );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select task
+            from TaskEntity task
+            where task.generationId = :generationId
+              and task.status not in :terminalStatuses
+            order by task.createdAt asc
+            """)
+    List<TaskEntity> findLockedByGenerationIdAndStatusNotIn(
+            @Param("generationId") UUID generationId,
+            @Param("terminalStatuses")
+            Collection<TaskStatus> terminalStatuses
+    );
+
+    @Query("""
+            select (count(task) > 0)
+            from TaskEntity task
+            where task.generationId = :generationId
+              and task.taskId <> :taskId
+              and task.status not in :terminalStatuses
+              and task.updatedAt >= :cutoff
+            """)
+    boolean existsCurrentTaskForGeneration(
+            @Param("generationId") UUID generationId,
+            @Param("taskId") UUID taskId,
+            @Param("terminalStatuses")
+            Collection<TaskStatus> terminalStatuses,
+            @Param("cutoff") Instant cutoff
+    );
 }

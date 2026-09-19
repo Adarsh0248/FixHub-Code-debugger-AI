@@ -46,6 +46,9 @@ public class TaskEntity {
     @Column(name = "base_commit_sha", length = 64)
     private String baseCommitSha;
 
+    @Column(name = "generation_id")
+    private UUID generationId;
+
     @Column(name = "request_summary", columnDefinition = "text")
     private String requestSummary;
 
@@ -93,7 +96,7 @@ public class TaskEntity {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    public static TaskEntity queued(
+  public static TaskEntity queued(
         TaskType taskType,
         String userId,
 
@@ -102,6 +105,7 @@ public class TaskEntity {
         String repo,
         String branch,
         String baseCommitSha,
+        UUID generationId,
 
         String requestSummary
 ) {
@@ -118,7 +122,7 @@ public class TaskEntity {
     task.repo = repo;
     task.branch = branch;
     task.baseCommitSha = baseCommitSha;
-
+    task.generationId = generationId;
     task.requestSummary = requestSummary;
 
     task.status = TaskStatus.QUEUED;
@@ -152,10 +156,69 @@ public class TaskEntity {
 
         this.status = TaskStatus.FAILED;
         this.stage = TaskStage.WORKER_TIMEOUT;
-        this.statusMessage = "The worker stopped updating this task";
+        this.statusMessage = "The worker stopped updating this task; retry indexing";
         this.errorCode = "WORKER_TIMEOUT";
-        this.errorMessage = "No worker update was received before the configured timeout";
+        this.errorMessage = "No worker update was received before the configured timeout. Cleanup was applied; retry indexing.";
         this.updatedAt = Instant.now();
+    }
+
+    public void detachIndexGeneration() {
+        this.generationId = null;
+    }
+
+    public void updateIndexProgress(
+            int indexedChunks,
+            int expectedChunks
+    ) {
+        if (status.isTerminal()) {
+            return;
+        }
+
+        status = TaskStatus.RUNNING;
+        stage = TaskStage.WAITING_FOR_INDEX;
+        progressCurrent = indexedChunks;
+        progressTotal = expectedChunks;
+        statusMessage = "Indexed "
+                + indexedChunks
+                + " of "
+                + expectedChunks
+                + " chunks";
+        eventSequence++;
+        updatedAt = Instant.now();
+    }
+
+    public void completeIndexGeneration(int expectedChunks) {
+        if (status.isTerminal()) {
+            return;
+        }
+
+        status = TaskStatus.COMPLETED;
+        stage = TaskStage.COMPLETED;
+        progressCurrent = expectedChunks;
+        progressTotal = expectedChunks;
+        statusMessage = "Repository index is ready";
+        validationSummary = "All "
+                + expectedChunks
+                + " chunks were confirmed by the vector engine";
+        eventSequence++;
+        updatedAt = Instant.now();
+    }
+
+    public void failIndexGeneration(
+            String failureCode,
+            String failureMessage
+    ) {
+        if (status.isTerminal()) {
+            return;
+        }
+
+        status = TaskStatus.FAILED;
+        stage = TaskStage.FAILED;
+        statusMessage = "Repository indexing failed";
+        errorCode = failureCode;
+        errorMessage = failureMessage;
+        eventSequence++;
+        updatedAt = Instant.now();
     }
 
     public boolean applyStatusEvent(TaskStatusEventV1 event) {

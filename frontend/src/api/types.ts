@@ -1,5 +1,22 @@
 export interface DebugRequestPayload {
   userQ: string;
+  branch: string;
+  mode: DebugMode;
+}
+
+export type DebugMode = 'GUIDE_ONLY' | 'FIX_AND_COMMIT';
+
+export interface RepositoryBranch {
+  name: string;
+  commitSha: string;
+  protectedBranch: boolean;
+}
+
+export interface RepositoryBranchPage {
+  branches: RepositoryBranch[];
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
 }
 
 export interface MeResponse {
@@ -53,6 +70,7 @@ export interface TaskResponse {
   branch: string;
   baseCommitSha: string;
   generationId: string | null;
+  debugMode: DebugMode | null;
   requestSummary: string | null;
 
   status: TaskStatus;
@@ -69,6 +87,7 @@ export interface TaskResponse {
   resultBranch: string | null;
   resultCommitSha: string | null;
   resultUrl: string | null;
+  resultExplanation: string | null;
 
   validationSummary: string | null;
 

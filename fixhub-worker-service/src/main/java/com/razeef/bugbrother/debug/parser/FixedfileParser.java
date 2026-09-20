@@ -19,9 +19,6 @@ public class FixedfileParser {
     public List<CommitService.FixedFile> parseFixedFiles(String response) {
         List<CommitService.FixedFile> fixedFiles = new ArrayList<>();
 
-        // Log the raw response for debugging
-        logger.info("Raw AI Response:\n{}", response);
-
         // Try multiple parsing strategies
 
         // Strategy 1: Original format with ==== File ====
@@ -52,8 +49,7 @@ public class FixedfileParser {
             return fixedFiles;
         }
 
-        logger.warn("No files could be parsed from the response. Response preview: {}",
-                response.length() > 200 ? response.substring(0, 200) + "..." : response);
+        logger.warn("No corrected files could be parsed from the model response");
 
         return fixedFiles;
     }
@@ -62,8 +58,13 @@ public class FixedfileParser {
     private List<CommitService.FixedFile> parseWithOriginalFormat(String response) {
         List<CommitService.FixedFile> fixedFiles = new ArrayList<>();
 
-        Pattern fileHeaderPattern = Pattern.compile("==== File ([^=]+) ====");
-        Pattern codeBlockPattern = Pattern.compile("```java\\s*\\n(.*?)\\n```", Pattern.DOTALL);
+        Pattern fileHeaderPattern = Pattern.compile(
+                "====\\s*File:\\s*([^=\\r\\n]+?)\\s*===="
+        );
+        Pattern codeBlockPattern = Pattern.compile(
+                "```[\\w.+-]*\\s*\\R(.*?)\\R```",
+                Pattern.DOTALL
+        );
 
         Matcher fileHeaderMatcher = fileHeaderPattern.matcher(response);
 

@@ -10,6 +10,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import com.razeef.bugbrother.events.TaskStatusEventV1;
+import com.razeef.bugbrother.events.TaskStatusEventV2;
+import com.razeef.bugbrother.debug.model.DebugMode;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -49,6 +51,10 @@ public class TaskEntity {
     @Column(name = "generation_id")
     private UUID generationId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "debug_mode", length = 32)
+    private DebugMode debugMode;
+
     @Column(name = "request_summary", columnDefinition = "text")
     private String requestSummary;
 
@@ -87,6 +93,9 @@ public class TaskEntity {
     @Column(name = "result_url", length = 1000)
     private String resultUrl;
 
+    @Column(name = "result_explanation", columnDefinition = "text")
+    private String resultExplanation;
+
     @Column(name = "validation_summary", length = 2000)
     private String validationSummary;
 
@@ -107,6 +116,8 @@ public class TaskEntity {
         String baseCommitSha,
         UUID generationId,
 
+        DebugMode debugMode,
+
         String requestSummary
 ) {
     TaskEntity task = new TaskEntity();
@@ -123,6 +134,7 @@ public class TaskEntity {
     task.branch = branch;
     task.baseCommitSha = baseCommitSha;
     task.generationId = generationId;
+    task.debugMode = debugMode;
     task.requestSummary = requestSummary;
 
     task.status = TaskStatus.QUEUED;
@@ -247,6 +259,33 @@ public class TaskEntity {
 
         this.validationSummary = event.validationSummary();
 
+        this.updatedAt = Instant.now();
+
+        return true;
+    }
+
+    public boolean applyStatusEvent(TaskStatusEventV2 event) {
+        if (this.status.isTerminal()) {
+            return false;
+        }
+
+        if (event.sequence() <= this.eventSequence) {
+            return false;
+        }
+
+        this.status = TaskStatus.valueOf(event.status());
+        this.stage = TaskStage.valueOf(event.stage());
+        this.eventSequence = event.sequence();
+        this.progressCurrent = event.progressCurrent();
+        this.progressTotal = event.progressTotal();
+        this.statusMessage = event.message();
+        this.errorCode = event.errorCode();
+        this.errorMessage = event.errorMessage();
+        this.resultBranch = event.resultBranch();
+        this.resultCommitSha = event.resultCommitSha();
+        this.resultUrl = event.resultUrl();
+        this.resultExplanation = event.resultExplanation();
+        this.validationSummary = event.validationSummary();
         this.updatedAt = Instant.now();
 
         return true;

@@ -1,6 +1,8 @@
 import type {
   DebugRequestPayload,
   MeResponse,
+  RepositoryBranch,
+  RepositoryBranchPage,
   TaskAcceptedResponse,
   TaskResponse,
 } from './types';
@@ -85,13 +87,40 @@ export async function submitDebugTask(
 export async function indexRepo(
   owner: string,
   repo: string,
+  branch: string,
 ): Promise<TaskAcceptedResponse> {
   const response = await request(
     `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/index`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch }),
+    },
   );
 
   return response.json();
+}
+
+export async function listRepositoryBranches(
+  owner: string,
+  repo: string,
+): Promise<RepositoryBranch[]> {
+  const branches: RepositoryBranch[] = [];
+  let page = 1;
+  let hasNext = true;
+
+  while (hasNext) {
+    const response = await request(
+      `/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?page=${page}&pageSize=100`,
+    );
+    const branchPage = (await response.json()) as RepositoryBranchPage;
+
+    branches.push(...branchPage.branches);
+    hasNext = branchPage.hasNext;
+    page += 1;
+  }
+
+  return branches;
 }
 
 export async function getTask(

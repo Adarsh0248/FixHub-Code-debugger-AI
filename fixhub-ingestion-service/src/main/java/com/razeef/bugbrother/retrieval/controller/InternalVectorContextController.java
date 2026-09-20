@@ -1,6 +1,8 @@
 package com.razeef.bugbrother.retrieval.controller;
 
 import com.razeef.bugbrother.retrieval.dto.request.ResolveVectorHitsRequest;
+import com.razeef.bugbrother.retrieval.dto.request.ResolveSourceFilesRequest;
+import com.razeef.bugbrother.retrieval.dto.response.ResolvedSourceFilesResponse;
 import com.razeef.bugbrother.retrieval.dto.response.VectorContextResponse;
 import com.razeef.bugbrother.retrieval.service.VectorContextService;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +33,19 @@ public class InternalVectorContextController {
     ) {
         return ResponseEntity.ok(
                 vectorContextService.resolve(
+                        generationId,
+                        request
+                )
+        );
+    }
+
+    @PostMapping("/{generationId}/resolve-files")
+    public ResponseEntity<ResolvedSourceFilesResponse> resolveFiles(
+            @PathVariable UUID generationId,
+            @RequestBody ResolveSourceFilesRequest request
+    ) {
+        return ResponseEntity.ok(
+                vectorContextService.resolveFiles(
                         generationId,
                         request
                 )

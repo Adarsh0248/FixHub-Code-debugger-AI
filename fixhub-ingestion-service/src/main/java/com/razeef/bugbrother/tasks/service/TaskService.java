@@ -11,6 +11,8 @@ import com.razeef.bugbrother.tasks.repository.ProcessedTaskEventRepository;
 import com.razeef.bugbrother.tasks.repository.TaskRepository;
 
 import com.razeef.bugbrother.events.TaskStatusEventV1;
+import com.razeef.bugbrother.events.TaskStatusEventV2;
+import com.razeef.bugbrother.debug.model.DebugMode;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
@@ -47,6 +49,8 @@ public class TaskService {
                 String baseCommitSha,
                 UUID generationId,
 
+                DebugMode debugMode,
+
                 String requestSummary
         ) {
         String userId =
@@ -62,6 +66,8 @@ public class TaskService {
                 branch,
                 baseCommitSha,
                 generationId,
+
+                debugMode,
 
                 requestSummary
         );
@@ -134,6 +140,29 @@ public class TaskService {
                         event.taskId()
                 )
         );
+    }
+
+    @KafkaListener(
+            topics = "code-guardian-task-events-v2",
+            groupId = "code-guardian-status-projection-v2"
+    )
+    @Transactional
+    public void projectStatusEventV2(TaskStatusEventV2 event) {
+        if (processedTaskEventRepository.existsById(event.eventId())) {
+            return;
+        }
+
+        TaskEntity task = taskRepository
+                .findLockedByTaskId(event.taskId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Received an event for unknown task: " + event.taskId()
+                ));
+
+        task.applyStatusEvent(event);
+        processedTaskEventRepository.save(new ProcessedTaskEvent(
+                event.eventId(),
+                event.taskId()
+        ));
     }
 
     public TaskAcceptedResponse acceptedResponse(TaskEntity task) {

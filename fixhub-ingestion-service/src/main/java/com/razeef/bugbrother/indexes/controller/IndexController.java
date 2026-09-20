@@ -5,6 +5,7 @@ import com.razeef.bugbrother.events.IndexRepositoryCommandV2;
 import com.razeef.bugbrother.indexes.dto.response.IndexGenerationAllocation;
 import com.razeef.bugbrother.indexes.service.IndexGenerationService;
 import com.razeef.bugbrother.repositories.dto.response.RepositoryResponse;
+import com.razeef.bugbrother.repositories.dto.request.BranchSelectionRequest;
 import com.razeef.bugbrother.repositories.service.RepositorySelectionService;
 import com.razeef.bugbrother.tasks.dto.response.TaskAcceptedResponse;
 import com.razeef.bugbrother.tasks.exception.TaskPublicationException;
@@ -19,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
@@ -55,12 +57,22 @@ public class IndexController {
     @PostMapping("/{owner}/{repo}/index")
     public ResponseEntity<?> index(
             @PathVariable String owner,
-            @PathVariable String repo
+            @PathVariable String repo,
+            @RequestBody BranchSelectionRequest request
     ) {
+        if (request == null
+                || request.branch() == null
+                || request.branch().isBlank()) {
+            throw new IllegalArgumentException(
+                    "A branch must be selected before indexing"
+            );
+        }
+
         RepositoryResponse repository =
                 repositorySelectionService.resolveRepository(
                         owner,
-                        repo
+                        repo,
+                        request.branch()
                 );
 
         IndexGenerationAllocation generation =
@@ -78,6 +90,8 @@ public class IndexController {
                 repository.selectedBranch(),
                 repository.commitSha(),
                 generation.generationId(),
+
+                null,
 
                 null
         );

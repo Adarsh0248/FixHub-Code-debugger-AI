@@ -85,7 +85,7 @@ public class CommitService {
                 .block();
     }
 
-    private void commitFile(String owner, String repo, String branchName, FixedFile file,String githubToken) {
+    private String commitFile(String owner, String repo, String branchName, FixedFile file,String githubToken) {
         try {
             // Get current file metadata
             Map<String, Object> fileMeta = webClient.get()
@@ -130,15 +130,22 @@ public class CommitService {
             }
 
             // Commit the file
-            webClient.put()
+            Map<String, Object> response = webClient.put()
                     .uri("/repos/{owner}/{repo}/contents/{path}", owner, repo, file.path())
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + githubToken)
                     .bodyValue(commitBody)
                     .retrieve()
-                    .bodyToMono(Void.class)
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
                     .block();
 
             System.out.println("Successfully committed: " + file.path());
+
+            if (response == null || !(response.get("commit") instanceof Map<?, ?> commit)) {
+                return null;
+            }
+
+            Object commitSha = commit.get("sha");
+            return commitSha == null ? null : commitSha.toString();
 
         } catch (Exception e) {
             System.err.println("Failed to commit file " + file.path() + ": " + e.getMessage());
@@ -147,29 +154,49 @@ public class CommitService {
     }
 
     // Enhanced version with better error handling and logging
-    public void createFixBranchAndCommitWithLogging(String owner, String repo, List<FixedFile> fixedFiles,String githubToken) {
+    public CommitResult createFixBranchAndCommitWithLogging(
+            String owner,
+            String repo,
+            String baseCommitSha,
+            List<FixedFile> fixedFiles,
+            String githubToken
+    ) {
+        if (baseCommitSha == null || baseCommitSha.isBlank()) {
+            throw new IllegalArgumentException(
+                    "The indexed base commit SHA is required"
+            );
+        }
+
         String branchName = "ai-fix/" + UUID.randomUUID();
         System.out.println("Starting to create branch: " + branchName);
 
         try {
-            // Get master branch SHA
-            System.out.println("Getting master branch SHA...");
-            String masterSha = getMasterBranchSha(owner, repo,githubToken);
-            System.out.println("Master SHA: " + masterSha);
-
             // Create new branch
             System.out.println("Creating new branch: " + branchName);
-            createNewBranch(owner, repo, branchName, masterSha,githubToken);
+            createNewBranch(
+                    owner,
+                    repo,
+                    branchName,
+                    baseCommitSha,
+                    githubToken
+            );
             System.out.println("Branch created successfully");
 
             // Commit each fixed file
             System.out.println("Committing " + fixedFiles.size() + " files...");
             int successCount = 0;
             int failCount = 0;
+            String lastCommitSha = null;
 
             for (FixedFile file : fixedFiles) {
                 try {
-                    commitFile(owner, repo, branchName, file,githubToken);
+                    lastCommitSha = commitFile(
+                            owner,
+                            repo,
+                            branchName,
+                            file,
+                            githubToken
+                    );
                     successCount++;
                     System.out.println("✓ Committed: " + file.path());
                 } catch (Exception e) {
@@ -198,6 +225,17 @@ public class CommitService {
 
             System.out.println("AI fixed code committed to branch: " + branchName);
 
+            return new CommitResult(
+                    branchName,
+                    lastCommitSha,
+                    "https://github.com/"
+                            + owner
+                            + "/"
+                            + repo
+                            + "/tree/"
+                            + branchName
+            );
+
         }  catch (WebClientResponseException e) {
             log.error("GitHub API Error: Status={}, Body={}",
                     e.getStatusCode(), e.getResponseBodyAsString());
@@ -215,6 +253,13 @@ public class CommitService {
                     e
             );
         }
+    }
+
+    public record CommitResult(
+            String branchName,
+            String commitSha,
+            String url
+    ) {
     }
 
     public record FixedFile(String path, String fixedContent) {}

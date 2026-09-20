@@ -4,11 +4,16 @@ import com.razeef.bugbrother.github.service.CommitService;
 import com.razeef.bugbrother.messaging.service.TaskStatusPublisher;
 import com.razeef.bugbrother.vector.service.VectorSearchService;
 import com.razeef.bugbrother.retrieval.client.IndexContextClient;
+import com.razeef.bugbrother.retrieval.exception.ContextBudgetExceededException;
+import com.razeef.bugbrother.retrieval.exception.ContextExpansionException;
+import com.razeef.bugbrother.retrieval.model.ContextBundle;
 import com.razeef.bugbrother.retrieval.model.VectorContext;
 import com.razeef.bugbrother.retrieval.model.VectorSearchHit;
 import com.razeef.bugbrother.retrieval.model.DependencyExpansion;
-import com.razeef.bugbrother.debug.ai.GitAiLayer;
-import com.razeef.bugbrother.events.DebugRepositoryCommandV2;
+import com.razeef.bugbrother.retrieval.service.ContextBundleService;
+import com.razeef.bugbrother.debug.model.DebugMode;
+import com.razeef.bugbrother.debug.model.ModelGenerationResult;
+import com.razeef.bugbrother.events.DebugRepositoryCommandV3;
 import com.razeef.bugbrother.debug.parser.FixedfileParser;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
@@ -22,34 +27,37 @@ public class DebugWorkerService {
     private static final int DEPENDENCY_DEPTH = 2;
     private static final int DEPENDENCY_FILE_LIMIT = 12;
 
-    private final GitAiLayer gitAiLayer;
     private final FixedfileParser fixedfileParser;
     private final CommitService commitService;
     private final VectorSearchService vectorSearchService;
     private final TaskStatusPublisher statusPublisher;
     private final IndexContextClient indexContextClient;
+    private final ContextBundleService contextBundleService;
+    private final IterativeModelGenerationService modelGenerationService;
 
     public DebugWorkerService(
-        GitAiLayer gitAiLayer,
         FixedfileParser fixedfileParser,
         CommitService commitService,
         VectorSearchService vectorSearchService,
         TaskStatusPublisher statusPublisher,
-        IndexContextClient indexContextClient
+        IndexContextClient indexContextClient,
+        ContextBundleService contextBundleService,
+        IterativeModelGenerationService modelGenerationService
         ) {
-        this.gitAiLayer = gitAiLayer;
         this.fixedfileParser = fixedfileParser;
         this.commitService = commitService;
         this.vectorSearchService = vectorSearchService;
         this.statusPublisher = statusPublisher;
         this.indexContextClient = indexContextClient;
+        this.contextBundleService = contextBundleService;
+        this.modelGenerationService = modelGenerationService;
         }
 
     @KafkaListener(
-            topics = "code-guardian-debug-tasks-v2",
-            groupId = "code-guardian-debug-v2-group"
+            topics = "code-guardian-debug-tasks-v3",
+            groupId = "code-guardian-debug-v3-group"
     )
-    public void consumeTask(DebugRepositoryCommandV2 command) {
+    public void consumeTask(DebugRepositoryCommandV3 command) {
         long sequence = 1;
 
         try {
@@ -94,17 +102,6 @@ public class DebugWorkerService {
         );
         }
 
-        List<CommitService.FixedFile> relatedFiles =
-                vectorContext.files()
-                        .stream()
-                        .map(file ->
-                                new CommitService.FixedFile(
-                                        file.path(),
-                                        file.content()
-                                )
-                        )
-                        .toList();
-
         DependencyExpansion dependencyExpansion =
                 indexContextClient.expandDependencies(
                         command.generationId(),
@@ -124,45 +121,61 @@ public class DebugWorkerService {
             );
         }
 
-        List<CommitService.FixedFile> supportingFiles =
-                dependencyExpansion.files()
-                        .stream()
-                        .map(file ->
-                                new CommitService.FixedFile(
-                                        file.path(),
-                                        file.content()
-                                )
-                        )
-                        .toList();
-
-            if (relatedFiles.isEmpty()) {
+            if (vectorContext.files().isEmpty()) {
                 throw new IllegalStateException(
                         "No related files were found. "
                                 + "Index the repository before debugging."
                 );
             }
 
+            ContextBundle contextBundle = contextBundleService.build(
+                    vectorContext,
+                    dependencyExpansion,
+                    command.errorQuery()
+            );
+
             statusPublisher.running(
                     command.taskId(),
                     sequence++,
                     "GENERATING",
-                    "Generating corrected files using "
-                            + relatedFiles.size()
-                            + " vector-matched file(s) and "
-                            + supportingFiles.size()
-                            + " dependency file(s)"
+                    (command.mode() == DebugMode.GUIDE_ONLY
+                            ? "Generating debugging guidance using "
+                            : "Generating corrected files using ")
+                            + contextBundle.primaryFiles().size()
+                            + " primary file(s) and "
+                            + contextBundle.supportingFiles().size()
+                            + " supporting file(s); estimated context "
+                            + contextBundle.estimatedTokens()
+                            + " tokens"
             );
 
-            String aiResponse = gitAiLayer.askAiDebug(
-                    relatedFiles,
-                    command.errorQuery(),
-                    supportingFiles
-            );
+            ModelGenerationResult generationResult =
+                    modelGenerationService.generate(
+                            command.mode(),
+                            command.generationId(),
+                            command.vectorClientId(),
+                            vectorContext,
+                            dependencyExpansion,
+                            command.errorQuery()
+                    );
 
-            if (aiResponse == null || aiResponse.isBlank()) {
-                throw new IllegalStateException(
-                        "The model returned an empty response"
+            String aiResponse = generationResult.response();
+
+            if (command.mode() == DebugMode.GUIDE_ONLY) {
+                statusPublisher.completedWithResult(
+                        command.taskId(),
+                        sequence,
+                        1,
+                        1,
+                        "Debugging guidance is ready",
+                        null,
+                        null,
+                        null,
+                        aiResponse.trim(),
+                        "No repository files were changed; model rounds: "
+                                + generationResult.rounds()
                 );
+                return;
             }
 
             List<CommitService.FixedFile> files =
@@ -181,14 +194,16 @@ public class DebugWorkerService {
                     "Creating the fix branch"
             );
 
-            commitService.createFixBranchAndCommitWithLogging(
+            CommitService.CommitResult commitResult =
+                    commitService.createFixBranchAndCommitWithLogging(
                     command.owner(),
                     command.repo(),
+                    command.baseCommitSha(),
                     files,
                     command.githubToken()
             );
 
-            statusPublisher.completed(
+            statusPublisher.completedWithResult(
                     command.taskId(),
                     sequence,
                     files.size(),
@@ -196,7 +211,13 @@ public class DebugWorkerService {
                     "Fix branch created with "
                             + files.size()
                             + " changed file(s)",
-                    "Patch validation will be added in Phase 7"
+                    commitResult.branchName(),
+                    commitResult.commitSha(),
+                    commitResult.url(),
+                    extractExplanation(aiResponse, files.size()),
+                    "Model rounds: "
+                            + generationResult.rounds()
+                            + "; patch validation will be added in Phase 7"
             );
         } catch (Exception exception) {
             statusPublisher.failed(
@@ -209,6 +230,14 @@ public class DebugWorkerService {
     }
 
     private String classify(Exception exception) {
+        if (exception instanceof ContextBudgetExceededException) {
+            return "CONTEXT_BUDGET_EXCEEDED";
+        }
+
+        if (exception instanceof ContextExpansionException) {
+            return "CONTEXT_EXPANSION_FAILED";
+        }
+
         String message = exception.getMessage() == null
                 ? ""
                 : exception.getMessage();
@@ -227,5 +256,27 @@ public class DebugWorkerService {
         }
 
         return "DEBUG_TASK_FAILED";
+    }
+
+    private String extractExplanation(
+            String aiResponse,
+            int changedFileCount
+    ) {
+        String marker = "EXPLANATION:";
+        int markerIndex = aiResponse.lastIndexOf(marker);
+
+        if (markerIndex >= 0) {
+            String explanation = aiResponse
+                    .substring(markerIndex + marker.length())
+                    .trim();
+
+            if (!explanation.isBlank()) {
+                return explanation;
+            }
+        }
+
+        return "The model corrected "
+                + changedFileCount
+                + " file(s). A structured explanation was not returned.";
     }
 }

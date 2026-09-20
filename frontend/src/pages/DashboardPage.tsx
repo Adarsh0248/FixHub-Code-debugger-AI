@@ -1,7 +1,16 @@
 import { FormEvent, useState } from "react";
 import { toast } from "sonner";
-import { ApiError, indexRepo, submitDebugTask } from "../api/client";
-import type { TaskResponse } from "../api/types";
+import {
+  ApiError,
+  indexRepo,
+  listRepositoryBranches,
+  submitDebugTask,
+} from "../api/client";
+import type {
+  DebugMode,
+  RepositoryBranch,
+  TaskResponse,
+} from "../api/types";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Header } from "../components/Header";
@@ -58,7 +67,12 @@ function formatTimestamp(timestamp: string): string {
 export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
+  const [branches, setBranches] = useState<RepositoryBranch[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [loadingBranches, setLoadingBranches] = useState(false);
   const [userQuery, setUserQuery] = useState("");
+  const [debugMode, setDebugMode] =
+    useState<DebugMode>("GUIDE_ONLY");
   const [indexing, setIndexing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -69,14 +83,58 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
     refresh,
   } = useTasks();
 
-  const canIndex = Boolean(owner.trim() && repo.trim() && !indexing);
+  const canLoadBranches = Boolean(
+    owner.trim() && repo.trim() && !loadingBranches,
+  );
+
+  const canIndex = Boolean(
+    owner.trim() &&
+      repo.trim() &&
+      selectedBranch &&
+      !indexing,
+  );
 
   const canSubmit = Boolean(
     owner.trim() &&
       repo.trim() &&
+      selectedBranch &&
       userQuery.trim() &&
       !submitting,
   );
+
+  function resetRepositorySelection() {
+    setBranches([]);
+    setSelectedBranch("");
+  }
+
+  async function handleLoadBranches() {
+    if (!canLoadBranches) {
+      return;
+    }
+
+    setLoadingBranches(true);
+
+    try {
+      const loadedBranches = await listRepositoryBranches(
+        owner.trim(),
+        repo.trim(),
+      );
+
+      setBranches(loadedBranches);
+      setSelectedBranch("");
+
+      if (loadedBranches.length === 0) {
+        toast.error("This repository has no accessible branches.");
+      } else {
+        toast.success(`Loaded ${loadedBranches.length} branches.`);
+      }
+    } catch (error) {
+      resetRepositorySelection();
+      toast.error(getErrorMessage(error));
+    } finally {
+      setLoadingBranches(false);
+    }
+  }
 
   async function handleIndex(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -88,7 +146,11 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
     setIndexing(true);
 
     try {
-      const task = await indexRepo(owner.trim(), repo.trim());
+      const task = await indexRepo(
+        owner.trim(),
+        repo.trim(),
+        selectedBranch,
+      );
 
       toast.success(
         `Indexing task accepted: ${task.taskId.slice(0, 8)}`,
@@ -115,7 +177,11 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
       const task = await submitDebugTask(
         owner.trim(),
         repo.trim(),
-        { userQ: userQuery.trim() },
+        {
+          userQ: userQuery.trim(),
+          branch: selectedBranch,
+          mode: debugMode,
+        },
       );
 
       toast.success(
@@ -171,7 +237,10 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
                 <input
                   id="index-owner"
                   value={owner}
-                  onChange={(event) => setOwner(event.target.value)}
+                  onChange={(event) => {
+                    setOwner(event.target.value);
+                    resetRepositorySelection();
+                  }}
                   placeholder="repository-owner"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
                 />
@@ -188,10 +257,52 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
                 <input
                   id="index-repo"
                   value={repo}
-                  onChange={(event) => setRepo(event.target.value)}
+                  onChange={(event) => {
+                    setRepo(event.target.value);
+                    resetRepositorySelection();
+                  }}
                   placeholder="repository-name"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
                 />
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!canLoadBranches}
+                  onClick={() => void handleLoadBranches()}
+                >
+                  {loadingBranches ? "Loading branches..." : "Load branches"}
+                </Button>
+
+                {branches.length > 0 && (
+                  <div className="min-w-0 flex-1">
+                    <label
+                      htmlFor="repository-branch"
+                      className="mb-1 block text-sm font-medium text-slate-700"
+                    >
+                      Branch to index and debug
+                    </label>
+
+                    <select
+                      id="repository-branch"
+                      value={selectedBranch}
+                      onChange={(event) =>
+                        setSelectedBranch(event.target.value)
+                      }
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                    >
+                      <option value="">Choose a branch</option>
+                      {branches.map((branch) => (
+                        <option key={branch.name} value={branch.name}>
+                          {branch.name}
+                          {branch.protectedBranch ? " (protected)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <Button type="submit" disabled={!canIndex}>
@@ -210,6 +321,48 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
                 <p className="mt-1 text-sm text-slate-600">
                   Describe the error after the repository has been indexed.
                 </p>
+              </div>
+
+              <div>
+                <span className="mb-2 block text-sm font-medium text-slate-700">
+                  What should BugBrother do?
+                </span>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="cursor-pointer rounded-lg border border-slate-300 p-3">
+                    <input
+                      type="radio"
+                      name="debug-mode"
+                      value="GUIDE_ONLY"
+                      checked={debugMode === "GUIDE_ONLY"}
+                      onChange={() => setDebugMode("GUIDE_ONLY")}
+                      className="mr-2"
+                    />
+                    <span className="font-medium text-slate-900">Guide me</span>
+                    <span className="mt-1 block text-sm text-slate-600">
+                      Explain the cause and show how to solve it. No repository
+                      files are changed.
+                    </span>
+                  </label>
+
+                  <label className="cursor-pointer rounded-lg border border-slate-300 p-3">
+                    <input
+                      type="radio"
+                      name="debug-mode"
+                      value="FIX_AND_COMMIT"
+                      checked={debugMode === "FIX_AND_COMMIT"}
+                      onChange={() => setDebugMode("FIX_AND_COMMIT")}
+                      className="mr-2"
+                    />
+                    <span className="font-medium text-slate-900">
+                      Fix and commit
+                    </span>
+                    <span className="mt-1 block text-sm text-slate-600">
+                      Create corrected files on a new fix branch, then explain
+                      the changes.
+                    </span>
+                  </label>
+                </div>
               </div>
 
               <div>
@@ -303,6 +456,20 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
                       {task.owner}/{task.repo}
                     </p>
 
+                    {task.branch && (
+                      <p className="mt-1 text-sm text-slate-600">
+                        Branch: {task.branch}
+                      </p>
+                    )}
+
+                    {task.debugMode && (
+                      <p className="mt-1 text-sm text-slate-600">
+                        Mode: {task.debugMode === "GUIDE_ONLY"
+                          ? "Guide me"
+                          : "Fix and commit"}
+                      </p>
+                    )}
+
                     {task.requestSummary && (
                       <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">
                         {task.requestSummary}
@@ -379,6 +546,17 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
                       <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                         {task.errorMessage}
                       </p>
+                    )}
+
+                    {task.resultExplanation && (
+                      <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                        <h4 className="font-medium text-blue-950">
+                          BugBrother explanation
+                        </h4>
+                        <div className="mt-2 whitespace-pre-wrap text-sm text-blue-900">
+                          {task.resultExplanation}
+                        </div>
+                      </div>
                     )}
 
                     <p className="mt-3 break-all text-xs text-slate-400">

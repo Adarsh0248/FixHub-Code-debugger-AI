@@ -5,6 +5,7 @@ import com.razeef.bugbrother.repositories.dto.response.RepositoryResponse;
 import com.razeef.bugbrother.repositories.exception.GitHubApiException;
 import com.razeef.bugbrother.repositories.model.GitHubApiError;
 import com.razeef.bugbrother.repositories.model.GitHubBranchData;
+import com.razeef.bugbrother.repositories.model.GitHubBranchPage;
 import com.razeef.bugbrother.repositories.model.GitHubRepositoryData;
 import com.razeef.bugbrother.repositories.model.RepositoryEntity;
 
@@ -35,6 +36,14 @@ public class RepositorySelectionService {
     public RepositoryResponse resolveRepository(
             String owner,
             String repo
+    ) {
+        return resolveRepository(owner, repo, null);
+    }
+
+    public RepositoryResponse resolveRepository(
+            String owner,
+            String repo,
+            String requestedBranch
     ) {
         String normalizedOwner = requireValue(
                 owner,
@@ -70,7 +79,10 @@ public class RepositorySelectionService {
                 gitHubRepositoryClient.resolveBranch(
                         repositoryData.owner(),
                         repositoryData.name(),
-                        repositoryData.defaultBranch(),
+                        requestedBranch == null
+                                || requestedBranch.isBlank()
+                                ? repositoryData.defaultBranch()
+                                : requestedBranch.trim(),
                         accessToken
                 );
 
@@ -83,6 +95,39 @@ public class RepositorySelectionService {
         return RepositoryResponse.from(
                 repository,
                 branch
+        );
+    }
+
+    public GitHubBranchPage listBranches(
+            String owner,
+            String repo,
+            int page,
+            int pageSize
+    ) {
+        String normalizedOwner = requireValue(owner, "Repository owner");
+        String normalizedRepo = requireValue(repo, "Repository name");
+        String accessToken = gitAuthService.getGitHubAccessToken();
+
+        GitHubRepositoryData repositoryData =
+                gitHubRepositoryClient.getRepository(
+                        normalizedOwner,
+                        normalizedRepo,
+                        accessToken
+                );
+
+        if (!repositoryData.canPull()) {
+            throw new GitHubApiException(
+                    GitHubApiError.ACCESS_DENIED,
+                    "The authenticated user cannot read this repository"
+            );
+        }
+
+        return gitHubRepositoryClient.listBranches(
+                repositoryData.owner(),
+                repositoryData.name(),
+                accessToken,
+                page,
+                pageSize
         );
     }
 

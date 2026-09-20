@@ -1,6 +1,6 @@
 package com.razeef.bugbrother.messaging.service;
 
-import com.razeef.bugbrother.events.TaskStatusEventV1;
+import com.razeef.bugbrother.events.TaskStatusEventV2;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 public class TaskStatusPublisher {
     
     private static final String TOPIC =
-            "code-guardian-task-events";
+            "code-guardian-task-events-v2";
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final Duration publishTimeout;
@@ -47,6 +47,7 @@ public class TaskStatusPublisher {
                 null,
                 null,
                 null,
+                null,
                 null
         );
     }
@@ -72,6 +73,37 @@ public class TaskStatusPublisher {
                 null,
                 null,
                 null,
+                null,
+                validationSummary
+        );
+    }
+
+    public void completedWithResult(
+            UUID taskId,
+            long sequence,
+            Integer progressCurrent,
+            Integer progressTotal,
+            String message,
+            String resultBranch,
+            String resultCommitSha,
+            String resultUrl,
+            String resultExplanation,
+            String validationSummary
+    ) {
+        publish(
+                taskId,
+                sequence,
+                "COMPLETED",
+                "COMPLETED",
+                progressCurrent,
+                progressTotal,
+                message,
+                null,
+                null,
+                resultBranch,
+                resultCommitSha,
+                resultUrl,
+                resultExplanation,
                 validationSummary
         );
     }
@@ -95,6 +127,7 @@ public class TaskStatusPublisher {
                 null,
                 null,
                 null,
+                null,
                 null
         );
     }
@@ -112,9 +145,10 @@ public class TaskStatusPublisher {
             String resultBranch,
             String resultCommitSha,
             String resultUrl,
+            String resultExplanation,
             String validationSummary
     ) {
-        TaskStatusEventV1 event = new TaskStatusEventV1(
+        TaskStatusEventV2 event = new TaskStatusEventV2(
                 UUID.randomUUID(),
                 taskId,
                 sequence,
@@ -128,6 +162,7 @@ public class TaskStatusPublisher {
                 resultBranch,
                 resultCommitSha,
                 resultUrl,
+                resultExplanation,
                 validationSummary,
                 Instant.now()
         );

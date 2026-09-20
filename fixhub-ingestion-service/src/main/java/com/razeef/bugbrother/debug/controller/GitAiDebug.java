@@ -1,6 +1,7 @@
 package com.razeef.bugbrother.debug.controller;
 
-import com.razeef.bugbrother.events.DebugRepositoryCommandV2;
+import com.razeef.bugbrother.events.DebugRepositoryCommandV3;
+import com.razeef.bugbrother.debug.model.DebugMode;
 import com.razeef.bugbrother.indexes.dto.response.ActiveIndexGenerationResponse;
 import com.razeef.bugbrother.indexes.service.ActiveIndexGenerationQueryService;
 import com.razeef.bugbrother.debug.dto.request.ResponsePayload;
@@ -31,7 +32,7 @@ import java.util.UUID;
 public class GitAiDebug {
 
     private static final String TOPIC =
-        "code-guardian-debug-tasks-v2";
+        "code-guardian-debug-tasks-v3";
 
     private final GitAuthService gitAuthService;
     private final RepositorySelectionService repositorySelectionService;
@@ -73,14 +74,35 @@ public class GitAiDebug {
                     );
         }
 
+        if (payload.getBranch() == null
+                || payload.getBranch().isBlank()) {
+            return ResponseEntity.badRequest().body(
+                    "Invalid payload: branch is required"
+            );
+        }
+
+        if (payload.getMode() == null) {
+            return ResponseEntity.badRequest().body(
+                    "Invalid payload: mode is required"
+            );
+        }
+
         String errorQuery =
                 payload.getUserQ().trim();
 
         RepositoryResponse repository =
                 repositorySelectionService.resolveRepository(
                         owner,
-                        repo
+                        repo,
+                        payload.getBranch()
                 );
+
+        if (payload.getMode() == DebugMode.FIX_AND_COMMIT
+                && !repository.canPush()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+                    "The selected mode requires write access to the repository"
+            );
+        }
 
         ActiveIndexGenerationResponse generation =
                 activeGenerationQueryService
@@ -99,14 +121,18 @@ public class GitAiDebug {
                 repository.commitSha(),
                 generation.generationId(),
 
+                payload.getMode(),
+
                 errorQuery
         );
 
-        DebugRepositoryCommandV2 command =
-                new DebugRepositoryCommandV2(
+        DebugRepositoryCommandV3 command =
+                new DebugRepositoryCommandV3(
                         UUID.randomUUID(),
                         task.getTaskId(),
                         task.getUserId(),
+
+                        payload.getMode(),
 
                         generation.generationId(),
                         generation.vectorClientId(),
@@ -121,7 +147,9 @@ public class GitAiDebug {
                         repository.commitSha(),
 
                         errorQuery,
-                        githubToken,
+                        payload.getMode() == DebugMode.FIX_AND_COMMIT
+                                ? githubToken
+                                : null,
                         Instant.now()
                 );
 

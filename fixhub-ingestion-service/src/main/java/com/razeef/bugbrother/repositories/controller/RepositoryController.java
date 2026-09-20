@@ -1,11 +1,14 @@
 package com.razeef.bugbrother.repositories.controller;
 
 import com.razeef.bugbrother.repositories.dto.response.RepositoryResponse;
+import com.razeef.bugbrother.repositories.model.GitHubBranchPage;
 import com.razeef.bugbrother.repositories.service.RepositorySelectionService;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -33,5 +36,20 @@ public class RepositoryController {
                 );
 
         return ResponseEntity.ok(repository);
+    }
+
+    @GetMapping("/{owner}/{repo}/branches")
+    public ResponseEntity<GitHubBranchPage> listBranches(
+            @PathVariable String owner,
+            @PathVariable String repo,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "100") int pageSize
+    ) {
+        return ResponseEntity.ok(selectionService.listBranches(
+                owner,
+                repo,
+                page,
+                pageSize
+        ));
     }
 }

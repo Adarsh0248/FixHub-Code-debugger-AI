@@ -4,6 +4,7 @@ import com.razeef.bugbrother.retrieval.exception.ContextRetrievalException;
 import com.razeef.bugbrother.retrieval.model.VectorContext;
 import com.razeef.bugbrother.retrieval.model.VectorSearchHit;
 import com.razeef.bugbrother.retrieval.model.DependencyExpansion;
+import com.razeef.bugbrother.retrieval.model.ResolvedSourceFiles;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
@@ -170,6 +171,60 @@ public class IndexContextClient {
         }
     }
 
+    public ResolvedSourceFiles resolveFiles(
+            UUID generationId,
+            String vectorClientId,
+            List<String> paths
+    ) {
+        if (generationId == null) {
+            throw new IllegalArgumentException(
+                    "generationId is required"
+            );
+        }
+        if (paths == null || paths.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "At least one source path is required"
+            );
+        }
+
+        try {
+            ResolvedSourceFiles response = webClient.post()
+                    .uri(
+                            "/internal/index-generations/"
+                                    + generationId
+                                    + "/resolve-files"
+                    )
+                    .header(WORKER_KEY_HEADER, workerKey)
+                    .bodyValue(new ResolveFilesRequest(
+                            vectorClientId,
+                            paths
+                    ))
+                    .retrieve()
+                    .bodyToMono(ResolvedSourceFiles.class)
+                    .block();
+
+            if (response == null) {
+                throw new ContextRetrievalException(
+                        "Ingestion returned an empty file response"
+                );
+            }
+            return response;
+        } catch (WebClientResponseException exception) {
+            throw new ContextRetrievalException(
+                    "Ingestion rejected requested files with HTTP "
+                            + exception.getStatusCode().value(),
+                    exception
+            );
+        } catch (ContextRetrievalException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new ContextRetrievalException(
+                    "Could not resolve requested source files",
+                    exception
+            );
+        }
+    }
+
     private record ResolveRequest(
             String vectorClientId,
             List<HitRequest> hits
@@ -188,6 +243,12 @@ public class IndexContextClient {
             List<UUID> seedFileIds,
             int maxDepth,
             int maxFiles
+    ) {
+    }
+
+    private record ResolveFilesRequest(
+            String vectorClientId,
+            List<String> paths
     ) {
     }
 }

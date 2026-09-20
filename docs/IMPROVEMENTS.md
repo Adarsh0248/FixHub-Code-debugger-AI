@@ -211,9 +211,11 @@ UserRepository.java
 
 ## 7. Deterministic dependency graph
 
-### Missing feature
+### Implemented foundation
 
-There is not yet a complete deterministic source-code dependency graph. Vector similarity alone cannot reliably find all files required for a multi-file fix.
+Dependency nodes and edges are stored per immutable generation. The worker expands both dependencies and dependents breadth-first with configured depth and file limits, and each expanded file records the edge that selected it.
+
+Language-specific semantic parsers and explicit ambiguous-symbol handling remain future improvements.
 
 ### Planned graph data
 
@@ -235,7 +237,7 @@ There is not yet a complete deterministic source-code dependency graph. Vector s
 
 ## 8. Iterative LLM context expansion
 
-### Planned behavior
+### Implemented foundation
 
 After vector retrieval and deterministic graph expansion, a context-planning LLM may request additional files or symbols.
 
@@ -257,13 +259,15 @@ Initial vector matches
 - Maximum single-file size.
 - Allowed repository paths only.
 
-The LLM should request files through structured output. It must not directly fetch GitHub paths or invent source content.
+The worker now parses `REQUIRED_ADDITIONAL_FILE` requests, validates repository-relative paths, resolves exact files only from the same ready generation in PostgreSQL, promotes them into primary context, and repeats generation with bounded rounds. Repeated, missing, unsafe, cross-generation, oversized, and over-limit requests fail the task.
+
+Replacing the text marker with schema-validated structured output remains a future improvement. The LLM cannot directly fetch GitHub paths or provide invented source content.
 
 ## 9. Selecting which files may be changed
 
-### Current limitation
+### Current foundation
 
-The fixing LLM can return any file path it chooses. Supporting context and editable files are not strongly separated.
+`ContextBundle` now separates primary editable candidates from supporting read-only files. Validated additional-file requests are promoted to primary context within the configured budget.
 
 ### Required improvement
 
@@ -494,4 +498,3 @@ Use the same task ID, generation ID, event ID, and correlation ID across structu
 - Previous active generation remains available during replacement indexing.
 - Safe cleanup distinction before and after vector submission.
 - Idempotent gateway deletion for failed generation cleanup.
-

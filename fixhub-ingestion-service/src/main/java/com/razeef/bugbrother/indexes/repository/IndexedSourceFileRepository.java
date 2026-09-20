@@ -28,6 +28,12 @@ public interface IndexedSourceFileRepository
             UUID generationId,
             String path
     );
+
+    List<IndexedSourceFileEntity>
+    findByGenerationIdAndPathIn(
+            UUID generationId,
+            Collection<String> paths
+    );
     
     long countByGenerationId(
         UUID generationId

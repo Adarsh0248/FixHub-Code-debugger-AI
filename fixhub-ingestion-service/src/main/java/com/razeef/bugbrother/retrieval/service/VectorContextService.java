@@ -10,9 +10,12 @@ import com.razeef.bugbrother.indexes.repository.IndexedChunkRepository;
 import com.razeef.bugbrother.indexes.repository.IndexedSourceFileRepository;
 import com.razeef.bugbrother.retrieval.dto.request.ResolveVectorHitsRequest;
 import com.razeef.bugbrother.retrieval.dto.request.VectorHitRequest;
+import com.razeef.bugbrother.retrieval.dto.request.ResolveSourceFilesRequest;
 import com.razeef.bugbrother.retrieval.dto.response.RetrievedChunkResponse;
 import com.razeef.bugbrother.retrieval.dto.response.RetrievedSourceFileResponse;
 import com.razeef.bugbrother.retrieval.dto.response.VectorContextResponse;
+import com.razeef.bugbrother.retrieval.dto.response.ResolvedSourceFileResponse;
+import com.razeef.bugbrother.retrieval.dto.response.ResolvedSourceFilesResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.LinkedHashSet;
 
 @Service
 public class VectorContextService {
@@ -189,6 +193,120 @@ public class VectorContextService {
 
                 List.copyOf(responseFiles)
         );
+    }
+
+    @Transactional(readOnly = true)
+    public ResolvedSourceFilesResponse resolveFiles(
+            UUID generationId,
+            ResolveSourceFilesRequest request
+    ) {
+        if (generationId == null || request == null) {
+            throw new IllegalArgumentException(
+                    "Generation and file request are required"
+            );
+        }
+        if (request.vectorClientId() == null
+                || request.vectorClientId().isBlank()) {
+            throw new IllegalArgumentException(
+                    "vectorClientId is required"
+            );
+        }
+        if (request.paths() == null || request.paths().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "At least one source path is required"
+            );
+        }
+        if (request.paths().size() > 10) {
+            throw new IllegalArgumentException(
+                    "A file request cannot exceed 10 paths"
+            );
+        }
+
+        IndexGenerationEntity generation = generationRepository
+                .findById(generationId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Generation not found: " + generationId
+                ));
+
+        if (generation.getStatus() != IndexGenerationStatus.READY) {
+            throw new IllegalStateException(
+                    "Only a ready generation can resolve source files"
+            );
+        }
+        if (!generation.getVectorClientId()
+                .equals(request.vectorClientId())) {
+            throw new IllegalArgumentException(
+                    "Vector client ID does not match generation"
+            );
+        }
+
+        List<String> paths = request.paths().stream()
+                .map(this::normalizeRequestedPath)
+                .collect(java.util.stream.Collectors.collectingAndThen(
+                        java.util.stream.Collectors.toCollection(
+                                LinkedHashSet::new
+                        ),
+                        List::copyOf
+                ));
+
+        List<IndexedSourceFileEntity> found = fileRepository
+                .findByGenerationIdAndPathIn(generationId, paths);
+        Map<String, IndexedSourceFileEntity> byPath = new HashMap<>();
+        found.forEach(file -> byPath.put(file.getPath(), file));
+
+        List<String> missing = paths.stream()
+                .filter(path -> !byPath.containsKey(path))
+                .toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Requested files do not exist in this generation: "
+                            + missing
+            );
+        }
+
+        List<ResolvedSourceFileResponse> files = paths.stream()
+                .map(byPath::get)
+                .map(file -> new ResolvedSourceFileResponse(
+                        file.getFileId(),
+                        file.getPath(),
+                        file.getLanguage(),
+                        file.getGitBlobSha(),
+                        file.getContentSha256(),
+                        file.getContent()
+                ))
+                .toList();
+
+        return new ResolvedSourceFilesResponse(
+                generationId,
+                generation.getVectorClientId(),
+                generation.getCommitSha(),
+                files
+        );
+    }
+
+    private String normalizeRequestedPath(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Requested source paths cannot be blank"
+            );
+        }
+
+        String path = value.trim().replace('\\', '/');
+        while (path.startsWith("./")) {
+            path = path.substring(2);
+        }
+
+        if (path.isBlank()
+                || path.startsWith("/")
+                || path.matches("^[A-Za-z]:.*")
+                || java.util.Arrays.asList(path.split("/", -1))
+                        .contains("..")) {
+            throw new IllegalArgumentException(
+                    "Unsafe repository path: " + value
+            );
+        }
+
+        return path;
     }
 
     private List<VectorHitRequest> normalizeHits(

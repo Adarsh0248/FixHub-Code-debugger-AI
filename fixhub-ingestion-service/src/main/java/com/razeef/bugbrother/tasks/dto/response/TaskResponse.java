@@ -4,6 +4,7 @@ import com.razeef.bugbrother.tasks.model.TaskEntity;
 import com.razeef.bugbrother.tasks.model.TaskStage;
 import com.razeef.bugbrother.tasks.model.TaskStatus;
 import com.razeef.bugbrother.tasks.model.TaskType;
+import com.razeef.bugbrother.debug.model.DebugMode;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -18,6 +19,8 @@ public record TaskResponse(
         String branch,
         String baseCommitSha,
         UUID generationId,
+
+        DebugMode debugMode,
 
         String requestSummary,
 
@@ -35,6 +38,8 @@ public record TaskResponse(
         String resultBranch,
         String resultCommitSha,
         String resultUrl,
+
+        String resultExplanation,
 
         String validationSummary,
 
@@ -55,6 +60,7 @@ public record TaskResponse(
                 task.getBranch(),
                 task.getBaseCommitSha(),
                 task.getGenerationId(),
+                task.getDebugMode(),
                 task.getRequestSummary(),
 
                 task.getStatus(),
@@ -71,6 +77,8 @@ public record TaskResponse(
                 task.getResultBranch(),
                 task.getResultCommitSha(),
                 task.getResultUrl(),
+
+                task.getResultExplanation(),
 
                 task.getValidationSummary(),
 

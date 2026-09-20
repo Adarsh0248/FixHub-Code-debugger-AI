@@ -119,19 +119,16 @@ Creating a fix commit does not mean the target branch has changed. The user may 
 - Do not activate a new main-branch generation merely because a fix branch was created.
 - Reindex the target branch after the fix is actually merged.
 
-### Current commit implementation problems
+### Implemented commit foundation
 
-- It assumes the target branch is named `main` instead of using the selected branch.
-- It commits files one at a time through the Contents API, producing multiple commits and allowing a partially committed fix.
-- A failure after some files are committed leaves an incomplete branch.
-- It does not verify that returned paths are inside the repository or belong to the allowed correction set.
-- It does not verify the branch head against `baseCommitSha` immediately before writing.
-- It does not return and persist the resulting branch name, commit SHA, and URL reliably.
-- It catches some GitHub failures after partial work instead of making the write atomic.
+- The selected source branch is checked against `baseCommitSha` before Git object creation and again before publishing the fix branch.
+- Corrected paths must exist as regular blobs in the immutable base tree.
+- Existing executable and regular-file modes are preserved.
+- Corrected contents are created as blobs, combined into one tree, and committed in one commit.
+- The fix branch reference is created last, preventing a partially committed visible branch.
+- The resulting branch name, commit SHA, and URL are persisted through the task result event.
 
-### Future improvement
-
-Use the Git data API to create one tree and one commit containing every corrected file, then create or update the fix branch once. Store the resulting branch, commit SHA, and URL in the task result.
+If the source branch moves during processing, the task fails with `STALE_BASE_COMMIT`. Any prepared Git objects remain unreachable and no fix branch is published.
 
 ## 4. Active and retired generation lifecycle
 
@@ -291,13 +288,16 @@ Before committing:
 
 ## 10. LLM output format and parsing
 
-### Current problems
+### Implemented foundation
 
-- The parser primarily expects Java markdown blocks.
-- Multiple fallback parsers make malformed responses appear valid.
-- Raw model responses are logged and may contain private source code.
-- There is no strict schema for changed, unchanged, created, or deleted files.
-- There is no patch-level validation before GitHub writes.
+- Active V3 debug tasks require strict JSON and reject unknown fields.
+- Raw model responses are not logged.
+- Guide mode cannot return repository changes.
+- Fix mode currently accepts `UPDATE` operations only.
+- Changed paths must be safe, unique, and present in primary context.
+- The supplied base content hash must match the immutable PostgreSQL file.
+- Supporting files cannot be changed until validated context expansion promotes them.
+- Changed-file, response-size, and corrected-file-size limits are enforced.
 
 ### Future improvement
 
@@ -318,7 +318,7 @@ Use structured JSON output validated against a schema, for example:
 }
 ```
 
-Reject the entire response if any change fails schema, path, base-hash, size, or permission validation.
+Add explicit `CREATE` and `DELETE` semantics, then validate those operations before enabling them. Replace the remaining legacy parser classes after old event versions are retired.
 
 ## 11. Validation before committing
 

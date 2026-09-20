@@ -1,6 +1,9 @@
 package com.razeef.bugbrother.debug.service;
 
 import com.razeef.bugbrother.github.service.CommitService;
+import com.razeef.bugbrother.github.model.AtomicCommitResult;
+import com.razeef.bugbrother.github.exception.GitHubCommitException;
+import com.razeef.bugbrother.github.exception.StaleBaseCommitException;
 import com.razeef.bugbrother.messaging.service.TaskStatusPublisher;
 import com.razeef.bugbrother.vector.service.VectorSearchService;
 import com.razeef.bugbrother.retrieval.client.IndexContextClient;
@@ -13,8 +16,10 @@ import com.razeef.bugbrother.retrieval.model.DependencyExpansion;
 import com.razeef.bugbrother.retrieval.service.ContextBundleService;
 import com.razeef.bugbrother.debug.model.DebugMode;
 import com.razeef.bugbrother.debug.model.ModelGenerationResult;
+import com.razeef.bugbrother.debug.model.ValidatedDebugResult;
+import com.razeef.bugbrother.debug.exception.ModelResponseValidationException;
+import com.razeef.bugbrother.debug.validation.DebugResponseValidator;
 import com.razeef.bugbrother.events.DebugRepositoryCommandV3;
-import com.razeef.bugbrother.debug.parser.FixedfileParser;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
@@ -27,30 +32,30 @@ public class DebugWorkerService {
     private static final int DEPENDENCY_DEPTH = 2;
     private static final int DEPENDENCY_FILE_LIMIT = 12;
 
-    private final FixedfileParser fixedfileParser;
     private final CommitService commitService;
     private final VectorSearchService vectorSearchService;
     private final TaskStatusPublisher statusPublisher;
     private final IndexContextClient indexContextClient;
     private final ContextBundleService contextBundleService;
     private final IterativeModelGenerationService modelGenerationService;
+    private final DebugResponseValidator debugResponseValidator;
 
     public DebugWorkerService(
-        FixedfileParser fixedfileParser,
         CommitService commitService,
         VectorSearchService vectorSearchService,
         TaskStatusPublisher statusPublisher,
         IndexContextClient indexContextClient,
         ContextBundleService contextBundleService,
-        IterativeModelGenerationService modelGenerationService
+        IterativeModelGenerationService modelGenerationService,
+        DebugResponseValidator debugResponseValidator
         ) {
-        this.fixedfileParser = fixedfileParser;
         this.commitService = commitService;
         this.vectorSearchService = vectorSearchService;
         this.statusPublisher = statusPublisher;
         this.indexContextClient = indexContextClient;
         this.contextBundleService = contextBundleService;
         this.modelGenerationService = modelGenerationService;
+        this.debugResponseValidator = debugResponseValidator;
         }
 
     @KafkaListener(
@@ -159,7 +164,12 @@ public class DebugWorkerService {
                             command.errorQuery()
                     );
 
-            String aiResponse = generationResult.response();
+            ValidatedDebugResult validated =
+                    debugResponseValidator.validate(
+                            command.mode(),
+                            generationResult.response(),
+                            generationResult.contextBundle()
+                    );
 
             if (command.mode() == DebugMode.GUIDE_ONLY) {
                 statusPublisher.completedWithResult(
@@ -171,7 +181,7 @@ public class DebugWorkerService {
                         null,
                         null,
                         null,
-                        aiResponse.trim(),
+                        validated.explanation(),
                         "No repository files were changed; model rounds: "
                                 + generationResult.rounds()
                 );
@@ -179,13 +189,15 @@ public class DebugWorkerService {
             }
 
             List<CommitService.FixedFile> files =
-                    fixedfileParser.parseFixedFiles(aiResponse);
-
-            if (files.isEmpty()) {
-                throw new IllegalStateException(
-                        "The model response contained no valid corrected files"
-                );
-            }
+                    validated.changes()
+                            .stream()
+                            .map(change ->
+                                    new CommitService.FixedFile(
+                                            change.path(),
+                                            change.content()
+                                    )
+                            )
+                            .toList();
 
             statusPublisher.running(
                     command.taskId(),
@@ -194,10 +206,11 @@ public class DebugWorkerService {
                     "Creating the fix branch"
             );
 
-            CommitService.CommitResult commitResult =
-                    commitService.createFixBranchAndCommitWithLogging(
+            AtomicCommitResult commitResult =
+                    commitService.createAtomicFixCommit(
                     command.owner(),
                     command.repo(),
+                    command.branch(),
                     command.baseCommitSha(),
                     files,
                     command.githubToken()
@@ -214,7 +227,7 @@ public class DebugWorkerService {
                     commitResult.branchName(),
                     commitResult.commitSha(),
                     commitResult.url(),
-                    extractExplanation(aiResponse, files.size()),
+                    validated.explanation(),
                     "Model rounds: "
                             + generationResult.rounds()
                             + "; patch validation will be added in Phase 7"
@@ -238,6 +251,18 @@ public class DebugWorkerService {
             return "CONTEXT_EXPANSION_FAILED";
         }
 
+        if (exception instanceof ModelResponseValidationException) {
+            return "MODEL_RESPONSE_INVALID";
+        }
+
+        if (exception instanceof StaleBaseCommitException) {
+            return "STALE_BASE_COMMIT";
+        }
+
+        if (exception instanceof GitHubCommitException) {
+            return "GITHUB_WRITE_FAILED";
+        }
+
         String message = exception.getMessage() == null
                 ? ""
                 : exception.getMessage();
@@ -258,25 +283,4 @@ public class DebugWorkerService {
         return "DEBUG_TASK_FAILED";
     }
 
-    private String extractExplanation(
-            String aiResponse,
-            int changedFileCount
-    ) {
-        String marker = "EXPLANATION:";
-        int markerIndex = aiResponse.lastIndexOf(marker);
-
-        if (markerIndex >= 0) {
-            String explanation = aiResponse
-                    .substring(markerIndex + marker.length())
-                    .trim();
-
-            if (!explanation.isBlank()) {
-                return explanation;
-            }
-        }
-
-        return "The model corrected "
-                + changedFileCount
-                + " file(s). A structured explanation was not returned.";
-    }
 }

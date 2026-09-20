@@ -143,23 +143,28 @@ public class GitAiLayer {
                 - SUPPORTING FILES are read-only dependency context used to understand types,
                   imports, contracts, and repository conventions.
 
-                Analyze the error across all provided context. Return corrected contents only
-                for PRIMARY FILES that actually need a change. Never return a SUPPORTING FILE
-                as corrected code in this response. If a supporting file also needs a change,
-                state its exact path after all code blocks under a line beginning with:
-                REQUIRED_ADDITIONAL_FILE:
+                Return exactly one JSON object with no markdown fence and no surrounding text:
+                {
+                  "changes": [
+                    {
+                      "path": "repository-relative path",
+                      "operation": "UPDATE",
+                      "baseContentSha256": "SHA-256 shown with the primary file",
+                      "content": "complete corrected file content",
+                      "reason": "why this file must change"
+                    }
+                  ],
+                  "additionalContextRequests": ["exact/repository/path"],
+                  "explanation": "cause of the error and how the changes fix it"
+                }
 
-                For each corrected primary file, use exactly this format:
-
-                ==== File: <repository-relative path> ====
-                ```<language>
-                <complete corrected file contents>
-                ```
-
-                Do not put explanations inside code blocks. Do not invent files or paths.
-                Preserve existing structure and behavior unless the reported fix requires a
-                change. After all code blocks, explain the cause and the fix under the exact
-                heading EXPLANATION:.
+                Only PRIMARY FILES may appear in changes. Never change a SUPPORTING FILE. If a
+                supporting or missing file must become editable, put its exact path in
+                additionalContextRequests and return an empty changes array for this round.
+                Do not invent paths. Use UPDATE only. Include complete file contents, preserve
+                repository structure, and copy the exact baseContentSha256 supplied with the
+                primary file. Use an empty additionalContextRequests array when context is
+                sufficient.
                 """;
     }
 
@@ -168,17 +173,18 @@ public class GitAiLayer {
                 You are an expert software engineer guiding a developer through a reported
                 repository error. Analyze the complete source files and the error query.
 
-                Explain:
-                1. The likely root cause.
-                2. Which repository files and symbols are involved.
-                3. The changes the developer should make, in order.
-                4. Small focused code examples where useful.
-                5. How to verify the fix.
+                Return exactly one JSON object with no markdown fence and no surrounding text:
+                {
+                  "changes": [],
+                  "additionalContextRequests": ["exact/repository/path"],
+                  "explanation": "detailed developer guidance"
+                }
 
-                Do not claim that you changed, committed, or pushed any file. Do not output
-                complete replacement files unless the user explicitly needs one to understand
-                the solution. If more repository context is required, write its exact path after
-                REQUIRED_ADDITIONAL_FILE:.
+                The changes array must always be empty. In explanation, describe the root cause,
+                involved files and symbols, ordered solution steps, focused code examples where
+                useful, and verification steps. Do not claim that files were changed, committed,
+                or pushed. If more context is required, request only exact repository paths in
+                additionalContextRequests. Otherwise use an empty array.
                 """;
     }
 }

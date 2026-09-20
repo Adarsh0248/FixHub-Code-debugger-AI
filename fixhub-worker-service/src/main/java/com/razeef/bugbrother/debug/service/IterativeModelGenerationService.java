@@ -3,7 +3,10 @@ package com.razeef.bugbrother.debug.service;
 import com.razeef.bugbrother.debug.ai.GitAiLayer;
 import com.razeef.bugbrother.debug.model.DebugMode;
 import com.razeef.bugbrother.debug.model.ModelGenerationResult;
-import com.razeef.bugbrother.debug.parser.AdditionalContextRequestParser;
+import com.razeef.bugbrother.debug.model.StructuredDebugResponse;
+import com.razeef.bugbrother.debug.parser.StructuredDebugResponseParser;
+import com.razeef.bugbrother.debug.validation.RepositoryPathPolicy;
+import com.razeef.bugbrother.debug.exception.ModelResponseValidationException;
 import com.razeef.bugbrother.retrieval.client.IndexContextClient;
 import com.razeef.bugbrother.retrieval.config.ContextBudgetProperties;
 import com.razeef.bugbrother.retrieval.exception.ContextExpansionException;
@@ -28,20 +31,23 @@ public class IterativeModelGenerationService {
 
     private final ContextBundleService contextBundleService;
     private final IndexContextClient indexContextClient;
-    private final AdditionalContextRequestParser requestParser;
+    private final StructuredDebugResponseParser responseParser;
+    private final RepositoryPathPolicy pathPolicy;
     private final GitAiLayer gitAiLayer;
     private final ContextBudgetProperties budget;
 
     public IterativeModelGenerationService(
             ContextBundleService contextBundleService,
             IndexContextClient indexContextClient,
-            AdditionalContextRequestParser requestParser,
+            StructuredDebugResponseParser responseParser,
+            RepositoryPathPolicy pathPolicy,
             GitAiLayer gitAiLayer,
             ContextBudgetProperties budget
     ) {
         this.contextBundleService = contextBundleService;
         this.indexContextClient = indexContextClient;
-        this.requestParser = requestParser;
+        this.responseParser = responseParser;
+        this.pathPolicy = pathPolicy;
         this.gitAiLayer = gitAiLayer;
         this.budget = budget;
     }
@@ -71,17 +77,28 @@ public class IterativeModelGenerationService {
                     new ArrayList<>(requestedByPath.values())
             );
 
-            String response = mode == DebugMode.GUIDE_ONLY
+            String rawResponse = mode == DebugMode.GUIDE_ONLY
                     ? gitAiLayer.askAiGuide(bundle)
                     : gitAiLayer.askAiDebug(bundle);
 
-            if (response == null || response.isBlank()) {
-                throw new IllegalStateException(
-                        "The model returned an empty response"
+            StructuredDebugResponse response =
+                    responseParser.parse(rawResponse);
+
+            List<String> requestedPaths = normalizeRequests(
+                    response.additionalContextRequests()
+            );
+            if (mode == DebugMode.GUIDE_ONLY
+                    && !response.changes().isEmpty()) {
+                throw new ModelResponseValidationException(
+                        "Guide mode cannot return repository changes"
                 );
             }
-
-            List<String> requestedPaths = requestParser.parse(response);
+            if (!requestedPaths.isEmpty()
+                    && !response.changes().isEmpty()) {
+                throw new ModelResponseValidationException(
+                        "A context request cannot include proposed changes"
+                );
+            }
             if (requestedPaths.isEmpty()) {
                 return new ModelGenerationResult(
                         response,
@@ -142,6 +159,19 @@ public class IterativeModelGenerationService {
         throw new ContextExpansionException(
                 "Context expansion ended without a final model response"
         );
+    }
+
+    private List<String> normalizeRequests(List<String> requests) {
+        if (requests == null) {
+            throw new ModelResponseValidationException(
+                    "The model response must include additionalContextRequests"
+            );
+        }
+
+        return requests.stream()
+                .map(pathPolicy::normalize)
+                .distinct()
+                .toList();
     }
 
     private void validateResolvedFiles(

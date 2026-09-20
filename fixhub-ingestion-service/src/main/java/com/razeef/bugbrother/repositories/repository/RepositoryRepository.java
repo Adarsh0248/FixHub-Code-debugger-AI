@@ -20,6 +20,10 @@ public interface RepositoryRepository
             String userId
     );
 
+    List<RepositoryEntity> findByGithubRepositoryId(
+            Long githubRepositoryId
+    );
+
     Optional<RepositoryEntity>
     findByUserIdAndGithubRepositoryId(
             String userId,

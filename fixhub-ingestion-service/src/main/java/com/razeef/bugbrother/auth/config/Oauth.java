@@ -36,9 +36,14 @@ public SecurityFilterChain filterChain(
         http
                 .cors(Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/", "/health", "/api/me").permitAll()
-                        .anyRequest().authenticated()
+                        .requestMatchers(
+                                "/",
+                                "/health",
+                                "/api/me",
+                                "/webhooks/github"
+                        ).permitAll()
                         .requestMatchers("/internal/**").hasRole("WORKER")
+                        .anyRequest().authenticated()
                 )
                 .csrf(AbstractHttpConfigurer::disable) // âœ… Modern way to disable CSRF
                 .oauth2Login(oauth2 -> oauth2.defaultSuccessUrl(frontendUrl, true))

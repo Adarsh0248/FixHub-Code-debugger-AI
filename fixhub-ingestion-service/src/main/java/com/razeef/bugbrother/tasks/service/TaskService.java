@@ -39,22 +39,50 @@ public class TaskService {
     }
 
     @Transactional
-        public TaskEntity createQueuedTask(
-                TaskType taskType,
+    public TaskEntity createQueuedTask(
+            TaskType taskType,
 
-                Long repositoryId,
-                String owner,
-                String repo,
-                String branch,
-                String baseCommitSha,
-                UUID generationId,
+            Long repositoryId,
+            String owner,
+            String repo,
+            String branch,
+            String baseCommitSha,
+            UUID generationId,
 
-                DebugMode debugMode,
+            DebugMode debugMode,
 
-                String requestSummary
-        ) {
-        String userId =
-                currentUserService.requireUserId();
+            String requestSummary
+    ) {
+        return createQueuedTaskForUser(
+                currentUserService.requireUserId(),
+                taskType,
+                repositoryId,
+                owner,
+                repo,
+                branch,
+                baseCommitSha,
+                generationId,
+                debugMode,
+                requestSummary
+        );
+    }
+
+    @Transactional
+    public TaskEntity createQueuedTaskForUser(
+            String userId,
+            TaskType taskType,
+            Long repositoryId,
+            String owner,
+            String repo,
+            String branch,
+            String baseCommitSha,
+            UUID generationId,
+            DebugMode debugMode,
+            String requestSummary
+    ) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("User ID is required");
+        }
 
         TaskEntity task = TaskEntity.queued(
                 taskType,
@@ -73,7 +101,7 @@ public class TaskService {
         );
 
         return taskRepository.save(task);
-        }
+    }
 
     @Transactional
     public void markPublicationFailed(

@@ -62,8 +62,20 @@ public class IndexGenerationService {
     public IndexGenerationAllocation allocate(
             RepositoryResponse repository
     ) {
-        String userId =
-                currentUserService.requireUserId();
+        return allocateForUser(
+                currentUserService.requireUserId(),
+                repository
+        );
+    }
+
+    @Transactional
+    public IndexGenerationAllocation allocateForUser(
+            String userId,
+            RepositoryResponse repository
+    ) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("User ID is required");
+        }
 
         Optional<IndexGenerationEntity> reusable =
                 generationRepository

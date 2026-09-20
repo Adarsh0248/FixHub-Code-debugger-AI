@@ -180,6 +180,7 @@ class IndexAcknowledgementServiceTest {
                 branch,
                 "abc123",
                 generationId,
+                null,
                 null
         );
 

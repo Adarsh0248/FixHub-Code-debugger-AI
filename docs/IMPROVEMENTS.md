@@ -90,9 +90,13 @@ Whenever a repository is selected or a debug task starts:
 3. Compare the two SHAs.
 4. If they differ, report that the index is stale and create a new generation.
 
-### Future automation
+### Implemented foundation
 
-Add verified GitHub webhooks for push and merge events:
+The ingestion service now accepts GitHub push webhooks at
+`POST /webhooks/github`. It verifies the raw body with HMAC-SHA256, ignores
+duplicate delivery IDs, and considers only branch pushes. For every BugBrother
+user tracking that repository and branch, a changed commit SHA creates a fresh
+full index generation through the same submission service as manual indexing.
 
 ```text
 GitHub push or merge
@@ -104,6 +108,12 @@ GitHub push or merge
 ```
 
 Webhook deliveries must be idempotent because GitHub can retry the same delivery.
+
+Each repository webhook must use the configured `GITHUB_WEBHOOK_SECRET`. The
+current OAuth authorized-client store must still contain the repository owner's
+GitHub token when a webhook arrives. Persisted encrypted credentials or a GitHub
+App installation token should replace this runtime dependency later. A durable
+transactional outbox is also still required to close the database/Kafka crash gap.
 
 ## 3. Fix branch and merge lifecycle
 

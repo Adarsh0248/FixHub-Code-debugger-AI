@@ -1,6 +1,8 @@
 package com.razeef.bugbrother.debug.controller;
 
-import com.razeef.bugbrother.events.DebugRepositoryCommandV1;
+import com.razeef.bugbrother.events.DebugRepositoryCommandV2;
+import com.razeef.bugbrother.indexes.dto.response.ActiveIndexGenerationResponse;
+import com.razeef.bugbrother.indexes.service.ActiveIndexGenerationQueryService;
 import com.razeef.bugbrother.debug.dto.request.ResponsePayload;
 import com.razeef.bugbrother.repositories.dto.response.RepositoryResponse;
 import com.razeef.bugbrother.repositories.service.RepositorySelectionService;
@@ -29,25 +31,31 @@ import java.util.UUID;
 public class GitAiDebug {
 
     private static final String TOPIC =
-            "code-guardian-tasks";
+        "code-guardian-debug-tasks-v2";
 
     private final GitAuthService gitAuthService;
     private final RepositorySelectionService repositorySelectionService;
     private final TaskService taskService;
     private final TaskCommandPublisher commandPublisher;
+    private final ActiveIndexGenerationQueryService
+        activeGenerationQueryService;
 
     public GitAiDebug(
-            GitAuthService gitAuthService,
-            RepositorySelectionService repositorySelectionService,
-            TaskService taskService,
-            TaskCommandPublisher commandPublisher
-    ) {
-        this.gitAuthService = gitAuthService;
-        this.repositorySelectionService =
-                repositorySelectionService;
-        this.taskService = taskService;
-        this.commandPublisher = commandPublisher;
-    }
+                GitAuthService gitAuthService,
+                RepositorySelectionService repositorySelectionService,
+                TaskService taskService,
+                TaskCommandPublisher commandPublisher,
+                ActiveIndexGenerationQueryService
+                        activeGenerationQueryService
+        ) {
+                this.gitAuthService = gitAuthService;
+                this.repositorySelectionService =
+                        repositorySelectionService;
+                this.taskService = taskService;
+                this.commandPublisher = commandPublisher;
+                this.activeGenerationQueryService =
+                        activeGenerationQueryService;
+        }
 
     @PostMapping("/debug/{owner}/{repo}")
     public ResponseEntity<?> debug(
@@ -74,6 +82,10 @@ public class GitAiDebug {
                         repo
                 );
 
+        ActiveIndexGenerationResponse generation =
+                activeGenerationQueryService
+                        .requireActiveGeneration(repository);
+
         String githubToken =
                 gitAuthService.getGitHubAccessToken();
 
@@ -85,16 +97,22 @@ public class GitAiDebug {
                 repository.name(),
                 repository.selectedBranch(),
                 repository.commitSha(),
-                null,
+                generation.generationId(),
 
                 errorQuery
         );
 
-        DebugRepositoryCommandV1 command =
-                new DebugRepositoryCommandV1(
+        DebugRepositoryCommandV2 command =
+                new DebugRepositoryCommandV2(
                         UUID.randomUUID(),
                         task.getTaskId(),
                         task.getUserId(),
+
+                        generation.generationId(),
+                        generation.vectorClientId(),
+                        generation.modelId(),
+                        generation.embeddingDimension(),
+                        generation.chunkerVersion(),
 
                         repository.repositoryId(),
                         repository.owner(),

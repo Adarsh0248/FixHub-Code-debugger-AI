@@ -3,9 +3,11 @@ package com.razeef.bugbrother.debug.service;
 import com.razeef.bugbrother.github.service.CommitService;
 import com.razeef.bugbrother.messaging.service.TaskStatusPublisher;
 import com.razeef.bugbrother.vector.service.VectorSearchService;
-
+import com.razeef.bugbrother.retrieval.client.IndexContextClient;
+import com.razeef.bugbrother.retrieval.model.VectorContext;
+import com.razeef.bugbrother.retrieval.model.VectorSearchHit;
 import com.razeef.bugbrother.debug.ai.GitAiLayer;
-import com.razeef.bugbrother.events.DebugRepositoryCommandV1;
+import com.razeef.bugbrother.events.DebugRepositoryCommandV2;
 import com.razeef.bugbrother.debug.parser.FixedfileParser;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
@@ -15,33 +17,36 @@ import java.util.List;
 @Service
 public class DebugWorkerService {
 
-    private static final int RELATED_FILES_LIMIT = 5;
+    private static final int INITIAL_VECTOR_HIT_LIMIT = 12;
 
     private final GitAiLayer gitAiLayer;
     private final FixedfileParser fixedfileParser;
     private final CommitService commitService;
     private final VectorSearchService vectorSearchService;
     private final TaskStatusPublisher statusPublisher;
+    private final IndexContextClient indexContextClient;
 
     public DebugWorkerService(
-            GitAiLayer gitAiLayer,
-            FixedfileParser fixedfileParser,
-            CommitService commitService,
-            VectorSearchService vectorSearchService,
-            TaskStatusPublisher statusPublisher
-    ) {
+        GitAiLayer gitAiLayer,
+        FixedfileParser fixedfileParser,
+        CommitService commitService,
+        VectorSearchService vectorSearchService,
+        TaskStatusPublisher statusPublisher,
+        IndexContextClient indexContextClient
+        ) {
         this.gitAiLayer = gitAiLayer;
         this.fixedfileParser = fixedfileParser;
         this.commitService = commitService;
         this.vectorSearchService = vectorSearchService;
         this.statusPublisher = statusPublisher;
-    }
+        this.indexContextClient = indexContextClient;
+        }
 
     @KafkaListener(
-            topics = "code-guardian-tasks",
-            groupId = "code-guardian-group"
+            topics = "code-guardian-debug-tasks-v2",
+            groupId = "code-guardian-debug-v2-group"
     )
-    public void consumeTask(DebugRepositoryCommandV1 command) {
+    public void consumeTask(DebugRepositoryCommandV2 command) {
         long sequence = 1;
 
         try {
@@ -59,15 +64,43 @@ public class DebugWorkerService {
                     "Searching the repository index"
             );
 
-            List<CommitService.FixedFile> relatedFiles =
-                    vectorSearchService.searchRelated(
-                            command.owner(),
-                            command.repo(),
-                            command.githubToken(),
-                            command.errorQuery(),
-                            List.of(),
-                            RELATED_FILES_LIMIT
-                    );
+            List<VectorSearchHit> hits =
+        vectorSearchService.searchGeneration(
+                command.vectorClientId(),
+                command.errorQuery(),
+                INITIAL_VECTOR_HIT_LIMIT
+        );
+
+        if (hits.isEmpty()) {
+        throw new IllegalStateException(
+                "No related chunks were found in the active index"
+        );
+        }
+
+        VectorContext vectorContext =
+                indexContextClient.resolve(
+                        command.generationId(),
+                        command.vectorClientId(),
+                        hits
+                );
+
+        if (!vectorContext.commitSha()
+                .equals(command.baseCommitSha())) {
+        throw new IllegalStateException(
+                "Retrieved context belongs to another commit"
+        );
+        }
+
+        List<CommitService.FixedFile> relatedFiles =
+                vectorContext.files()
+                        .stream()
+                        .map(file ->
+                                new CommitService.FixedFile(
+                                        file.path(),
+                                        file.content()
+                                )
+                        )
+                        .toList();
 
             if (relatedFiles.isEmpty()) {
                 throw new IllegalStateException(

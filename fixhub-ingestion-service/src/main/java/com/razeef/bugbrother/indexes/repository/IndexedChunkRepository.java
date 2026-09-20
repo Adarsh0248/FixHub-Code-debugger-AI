@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Collection;
 
 public interface IndexedChunkRepository
         extends JpaRepository<IndexedChunkEntity, UUID> {
@@ -36,6 +37,13 @@ public interface IndexedChunkRepository
             UUID generationId,
             ChunkIndexStatus status
     );
+
+    List<IndexedChunkEntity>
+        findByGenerationIdAndVectorLabelInAndStatus(
+                UUID generationId,
+                Collection<String> vectorLabels,
+                ChunkIndexStatus status
+        );
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""

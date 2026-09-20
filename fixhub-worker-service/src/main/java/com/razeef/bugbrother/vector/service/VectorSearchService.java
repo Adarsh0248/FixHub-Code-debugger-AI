@@ -10,6 +10,7 @@ import com.razeef.bugbrother.grpc.gateway.GatewayScoredResult;
 import com.razeef.bugbrother.grpc.gateway.GatewaySearchRequest;
 import com.razeef.bugbrother.grpc.gateway.GatewaySearchResponse;
 import com.razeef.bugbrother.grpc.gateway.GatewayDeleteRequest;
+import com.razeef.bugbrother.retrieval.model.VectorSearchHit;
 import io.grpc.StatusRuntimeException;
 import io.grpc.Status;
 import lombok.extern.slf4j.Slf4j;
@@ -166,6 +167,99 @@ public class VectorSearchService {
                 failed
         );
     }
+
+    
+    public List<VectorSearchHit> searchGeneration(
+        String vectorClientId,
+        String queryText,
+        int resultLimit
+    ) {
+        if (vectorClientId == null
+                || vectorClientId.isBlank()) {
+            throw new IllegalArgumentException(
+                    "vectorClientId is required"
+            );
+        }
+
+        if (queryText == null || queryText.isBlank()) {
+            throw new IllegalArgumentException(
+                    "queryText is required"
+            );
+        }
+
+        if (resultLimit < 1 || resultLimit > 50) {
+            throw new IllegalArgumentException(
+                    "resultLimit must be between 1 and 50"
+            );
+        }
+
+        long clientId;
+
+        try {
+            clientId = Long.parseUnsignedLong(
+                    vectorClientId
+            );
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(
+                    "vectorClientId must be an unsigned 64-bit value",
+                    exception
+            );
+        }
+
+        GatewaySearchResponse response;
+
+        try {
+            response = gatewayStub.search(
+                    GatewaySearchRequest.newBuilder()
+                            .setText(queryText)
+                            .setK(resultLimit)
+                            .setEf(
+                                    Math.max(
+                                            DEFAULT_EF,
+                                            resultLimit
+                                    )
+                            )
+                            .setAllowPartial(false)
+                            .setClientId(clientId)
+                            .build()
+            );
+        } catch (StatusRuntimeException exception) {
+            throw new IllegalStateException(
+                    "Vector search failed: "
+                            + exception.getStatus().getCode(),
+                    exception
+            );
+        }
+
+        List<VectorSearchHit> hits =
+                new ArrayList<>();
+
+        for (int index = 0;
+            index < response.getResultsCount();
+            index++) {
+            GatewayScoredResult result =
+                    response.getResults(index);
+
+            if (result.getKey().getClientId()
+                    != clientId) {
+                throw new IllegalStateException(
+                        "Vector search returned a result "
+                                + "for another client"
+                );
+            }
+
+            hits.add(new VectorSearchHit(
+                    Long.toUnsignedString(
+                            result.getKey().getLabel()
+                    ),
+                    result.getDistance(),
+                    index
+            ));
+        }
+
+        return List.copyOf(hits);
+    }
+
 
 
     public ChunkSubmissionResult submitChunks(

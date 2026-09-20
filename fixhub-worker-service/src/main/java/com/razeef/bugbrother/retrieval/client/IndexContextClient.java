@@ -1,0 +1,126 @@
+package com.razeef.bugbrother.retrieval.client;
+
+import com.razeef.bugbrother.retrieval.exception.ContextRetrievalException;
+import com.razeef.bugbrother.retrieval.model.VectorContext;
+import com.razeef.bugbrother.retrieval.model.VectorSearchHit;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class IndexContextClient {
+
+    private static final String WORKER_KEY_HEADER =
+            "X-BugBrother-Worker-Key";
+
+    private final WebClient webClient;
+    private final String workerKey;
+
+    public IndexContextClient(
+            WebClient.Builder builder,
+            @Value("${bugbrother.ingestion.base-url}")
+            String ingestionBaseUrl,
+            @Value("${bugbrother.internal.worker-key}")
+            String workerKey
+    ) {
+        this.webClient = builder
+                .baseUrl(ingestionBaseUrl)
+                .defaultHeader(
+                        HttpHeaders.ACCEPT,
+                        "application/json"
+                )
+                .defaultHeader(
+                        HttpHeaders.CONTENT_TYPE,
+                        "application/json"
+                )
+                .build();
+
+        this.workerKey = workerKey;
+    }
+
+    public VectorContext resolve(
+            UUID generationId,
+            String vectorClientId,
+            List<VectorSearchHit> hits
+    ) {
+        if (generationId == null) {
+            throw new IllegalArgumentException(
+                    "generationId is required"
+            );
+        }
+
+        if (hits == null || hits.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "At least one vector hit is required"
+            );
+        }
+
+        ResolveRequest request = new ResolveRequest(
+                vectorClientId,
+                hits.stream()
+                        .map(hit -> new HitRequest(
+                                hit.vectorLabel(),
+                                hit.distance(),
+                                hit.rank()
+                        ))
+                        .toList()
+        );
+
+        try {
+            VectorContext response = webClient.post()
+                    .uri(
+                            "/internal/index-generations/"
+                                    + generationId
+                                    + "/resolve-vector-hits"
+                    )
+                    .header(
+                            WORKER_KEY_HEADER,
+                            workerKey
+                    )
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(VectorContext.class)
+                    .block();
+
+            if (response == null) {
+                throw new ContextRetrievalException(
+                        "Ingestion returned an empty vector context"
+                );
+            }
+
+            return response;
+        } catch (WebClientResponseException exception) {
+            throw new ContextRetrievalException(
+                    "Ingestion rejected vector context request "
+                            + "with HTTP "
+                            + exception.getStatusCode().value(),
+                    exception
+            );
+        } catch (ContextRetrievalException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new ContextRetrievalException(
+                    "Could not resolve vector results",
+                    exception
+            );
+        }
+    }
+
+    private record ResolveRequest(
+            String vectorClientId,
+            List<HitRequest> hits
+    ) {
+    }
+
+    private record HitRequest(
+            String vectorLabel,
+            float distance,
+            int rank
+    ) {
+    }
+}

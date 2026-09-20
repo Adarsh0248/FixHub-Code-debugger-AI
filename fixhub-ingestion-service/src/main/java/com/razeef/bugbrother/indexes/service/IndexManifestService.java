@@ -13,7 +13,7 @@ import com.razeef.bugbrother.indexes.repository.IndexGenerationRepository;
 import com.razeef.bugbrother.indexes.dto.request.ChunkSubmissionInput;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.razeef.bugbrother.dependencies.service.DependencyGraphService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,16 +25,20 @@ public class IndexManifestService {
     private final IndexGenerationRepository generationRepository;
     private final IndexedSourceFileRepository fileRepository;
     private final IndexedChunkRepository chunkRepository;
+    private final DependencyGraphService dependencyGraphService;
 
-    public IndexManifestService(
-            IndexGenerationRepository generationRepository,
-            IndexedSourceFileRepository fileRepository,
-            IndexedChunkRepository chunkRepository
-    ) {
+        public IndexManifestService(
+                IndexGenerationRepository generationRepository,
+                IndexedSourceFileRepository fileRepository,
+                IndexedChunkRepository chunkRepository,
+                DependencyGraphService dependencyGraphService
+        ) {
         this.generationRepository = generationRepository;
         this.fileRepository = fileRepository;
         this.chunkRepository = chunkRepository;
-    }
+        this.dependencyGraphService =
+                dependencyGraphService;
+        }
 
     @Transactional
     public int storeFiles(
@@ -319,6 +323,8 @@ public class IndexManifestService {
                             + "with different values"
             );
         }
+
+        dependencyGraphService.rebuild(generationId);
 
         return new ManifestRegistrationResult(
                 generationId,

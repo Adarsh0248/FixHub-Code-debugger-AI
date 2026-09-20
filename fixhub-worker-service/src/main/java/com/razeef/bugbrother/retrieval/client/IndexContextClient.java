@@ -3,6 +3,7 @@ package com.razeef.bugbrother.retrieval.client;
 import com.razeef.bugbrother.retrieval.exception.ContextRetrievalException;
 import com.razeef.bugbrother.retrieval.model.VectorContext;
 import com.razeef.bugbrother.retrieval.model.VectorSearchHit;
+import com.razeef.bugbrother.retrieval.model.DependencyExpansion;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
@@ -111,6 +112,64 @@ public class IndexContextClient {
         }
     }
 
+    public DependencyExpansion expandDependencies(
+            UUID generationId,
+            String vectorClientId,
+            List<UUID> seedFileIds,
+            int maxDepth,
+            int maxFiles
+    ) {
+        if (generationId == null) {
+            throw new IllegalArgumentException(
+                    "generationId is required"
+            );
+        }
+        if (seedFileIds == null || seedFileIds.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "At least one seed file is required"
+            );
+        }
+
+        try {
+            DependencyExpansion response = webClient.post()
+                    .uri(
+                            "/internal/index-generations/"
+                                    + generationId
+                                    + "/expand-dependencies"
+                    )
+                    .header(WORKER_KEY_HEADER, workerKey)
+                    .bodyValue(new ExpansionRequest(
+                            vectorClientId,
+                            seedFileIds,
+                            maxDepth,
+                            maxFiles
+                    ))
+                    .retrieve()
+                    .bodyToMono(DependencyExpansion.class)
+                    .block();
+
+            if (response == null) {
+                throw new ContextRetrievalException(
+                        "Ingestion returned an empty dependency expansion"
+                );
+            }
+            return response;
+        } catch (WebClientResponseException exception) {
+            throw new ContextRetrievalException(
+                    "Ingestion rejected dependency expansion with HTTP "
+                            + exception.getStatusCode().value(),
+                    exception
+            );
+        } catch (ContextRetrievalException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new ContextRetrievalException(
+                    "Could not expand repository dependencies",
+                    exception
+            );
+        }
+    }
+
     private record ResolveRequest(
             String vectorClientId,
             List<HitRequest> hits
@@ -121,6 +180,14 @@ public class IndexContextClient {
             String vectorLabel,
             float distance,
             int rank
+    ) {
+    }
+
+    private record ExpansionRequest(
+            String vectorClientId,
+            List<UUID> seedFileIds,
+            int maxDepth,
+            int maxFiles
     ) {
     }
 }

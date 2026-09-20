@@ -6,6 +6,7 @@ import com.razeef.bugbrother.vector.service.VectorSearchService;
 import com.razeef.bugbrother.retrieval.client.IndexContextClient;
 import com.razeef.bugbrother.retrieval.model.VectorContext;
 import com.razeef.bugbrother.retrieval.model.VectorSearchHit;
+import com.razeef.bugbrother.retrieval.model.DependencyExpansion;
 import com.razeef.bugbrother.debug.ai.GitAiLayer;
 import com.razeef.bugbrother.events.DebugRepositoryCommandV2;
 import com.razeef.bugbrother.debug.parser.FixedfileParser;
@@ -18,6 +19,8 @@ import java.util.List;
 public class DebugWorkerService {
 
     private static final int INITIAL_VECTOR_HIT_LIMIT = 12;
+    private static final int DEPENDENCY_DEPTH = 2;
+    private static final int DEPENDENCY_FILE_LIMIT = 12;
 
     private final GitAiLayer gitAiLayer;
     private final FixedfileParser fixedfileParser;
@@ -102,6 +105,36 @@ public class DebugWorkerService {
                         )
                         .toList();
 
+        DependencyExpansion dependencyExpansion =
+                indexContextClient.expandDependencies(
+                        command.generationId(),
+                        command.vectorClientId(),
+                        vectorContext.files()
+                                .stream()
+                                .map(file -> file.fileId())
+                                .toList(),
+                        DEPENDENCY_DEPTH,
+                        DEPENDENCY_FILE_LIMIT
+                );
+
+        if (!dependencyExpansion.generationId()
+                .equals(command.generationId())) {
+            throw new IllegalStateException(
+                    "Dependency expansion belongs to another generation"
+            );
+        }
+
+        List<CommitService.FixedFile> supportingFiles =
+                dependencyExpansion.files()
+                        .stream()
+                        .map(file ->
+                                new CommitService.FixedFile(
+                                        file.path(),
+                                        file.content()
+                                )
+                        )
+                        .toList();
+
             if (relatedFiles.isEmpty()) {
                 throw new IllegalStateException(
                         "No related files were found. "
@@ -113,12 +146,17 @@ public class DebugWorkerService {
                     command.taskId(),
                     sequence++,
                     "GENERATING",
-                    "Generating corrected files"
+                    "Generating corrected files using "
+                            + relatedFiles.size()
+                            + " vector-matched file(s) and "
+                            + supportingFiles.size()
+                            + " dependency file(s)"
             );
 
             String aiResponse = gitAiLayer.askAiDebug(
                     relatedFiles,
-                    command.errorQuery()
+                    command.errorQuery(),
+                    supportingFiles
             );
 
             if (aiResponse == null || aiResponse.isBlank()) {

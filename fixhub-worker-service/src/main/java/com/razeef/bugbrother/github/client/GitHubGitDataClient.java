@@ -11,9 +11,57 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Objects;
 
 @Component
 public class GitHubGitDataClient {
+
+    public String findBranchHead(String owner, String repo,
+            String branch, String token) {
+        try {
+            return getBranchHead(owner, repo, branch, token);
+        } catch (GitHubCommitException exception) {
+            if (exception.getCause() instanceof WebClientResponseException response
+                    && response.getStatusCode().value() == 404) {
+                return null;
+            }
+            throw exception;
+        }
+    }
+
+    public GitCommitIdentity getCommitIdentity(String owner, String repo,
+            String commitSha, String token) {
+        try {
+            GitCommitIdentityResponse response = webClient.get()
+                    .uri("/repos/{owner}/{repo}/git/commits/{sha}",
+                            owner, repo, commitSha)
+                    .header(HttpHeaders.AUTHORIZATION, bearer(token))
+                    .retrieve()
+                    .bodyToMono(GitCommitIdentityResponse.class)
+                    .block();
+            if (response == null || response.message() == null
+                    || response.parents() == null
+                    || response.parents().size() != 1
+                    || response.parents().get(0).sha() == null) {
+                throw invalidResponse("fix commit");
+            }
+            return new GitCommitIdentity(response.message(),
+                    response.parents().get(0).sha());
+        } catch (WebClientResponseException exception) {
+            throw requestFailed("read the fix commit", exception);
+        }
+    }
+
+    public record GitCommitIdentity(String message, String parentSha) {
+        public GitCommitIdentity {
+            Objects.requireNonNull(message);
+            Objects.requireNonNull(parentSha);
+        }
+    }
+
+    private record GitCommitIdentityResponse(
+            String message, List<GitObjectResponse> parents) {
+    }
 
     private final WebClient webClient;
 

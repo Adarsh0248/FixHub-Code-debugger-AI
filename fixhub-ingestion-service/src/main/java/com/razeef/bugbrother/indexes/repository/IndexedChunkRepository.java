@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Optional;
@@ -16,6 +17,19 @@ import java.util.Collection;
 
 public interface IndexedChunkRepository
         extends JpaRepository<IndexedChunkEntity, UUID> {
+
+    @Query("""
+            select chunk from IndexedChunkEntity chunk
+            where chunk.generationId = :generationId
+              and chunk.status = :status
+              and chunk.chunkId > :afterChunkId
+            order by chunk.chunkId asc
+            """)
+    List<IndexedChunkEntity> findSubmissionPage(
+            @Param("generationId") UUID generationId,
+            @Param("status") ChunkIndexStatus status,
+            @Param("afterChunkId") String afterChunkId,
+            Pageable pageable);
 
     List<IndexedChunkEntity>
     findByGenerationIdOrderByPathAscStartLineAsc(

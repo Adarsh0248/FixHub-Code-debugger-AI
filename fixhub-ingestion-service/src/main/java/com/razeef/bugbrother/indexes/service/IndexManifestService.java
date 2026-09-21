@@ -3,6 +3,9 @@ package com.razeef.bugbrother.indexes.service;
 import com.razeef.bugbrother.indexes.dto.request.ManifestChunkInput;
 import com.razeef.bugbrother.indexes.dto.request.ManifestFileInput;
 import com.razeef.bugbrother.indexes.dto.response.ManifestRegistrationResult;
+import com.razeef.bugbrother.indexes.dto.response.IndexSubmissionRecoveryState;
+import com.razeef.bugbrother.indexes.dto.response.PendingChunkSubmissionResponse;
+import com.razeef.bugbrother.indexes.model.ChunkIndexStatus;
 import com.razeef.bugbrother.indexes.model.IndexedChunkEntity;
 import com.razeef.bugbrother.indexes.model.IndexedSourceFileEntity;
 import com.razeef.bugbrother.indexes.model.IndexGenerationEntity;
@@ -13,6 +16,7 @@ import com.razeef.bugbrother.indexes.repository.IndexGenerationRepository;
 import com.razeef.bugbrother.indexes.dto.request.ChunkSubmissionInput;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.PageRequest;
 import com.razeef.bugbrother.dependencies.service.DependencyGraphService;
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +25,34 @@ import java.util.UUID;
 
 @Service
 public class IndexManifestService {
+
+    @Transactional(readOnly = true)
+    public IndexSubmissionRecoveryState recoveryState(UUID generationId) {
+        IndexGenerationEntity generation = generationRepository.findById(
+                generationId).orElseThrow(() -> new IllegalArgumentException(
+                        "Generation not found: " + generationId));
+        return IndexSubmissionRecoveryState.from(generation);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PendingChunkSubmissionResponse> pendingSubmissions(
+            UUID generationId, String afterChunkId) {
+        IndexGenerationEntity generation = generationRepository.findById(
+                generationId).orElseThrow(() -> new IllegalArgumentException(
+                        "Generation not found: " + generationId));
+        if (generation.getStatus() != IndexGenerationStatus.BUILDING
+                || !generation.isVectorSubmissionStarted()) {
+            return List.of();
+        }
+
+        return chunkRepository.findSubmissionPage(
+                        generationId, ChunkIndexStatus.SUBMITTED,
+                        afterChunkId == null ? "" : afterChunkId,
+                        PageRequest.of(0, 100))
+                .stream()
+                .map(PendingChunkSubmissionResponse::from)
+                .toList();
+    }
 
     private final IndexGenerationRepository generationRepository;
     private final IndexedSourceFileRepository fileRepository;

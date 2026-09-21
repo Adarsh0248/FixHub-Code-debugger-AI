@@ -5,12 +5,12 @@ import com.razeef.bugbrother.events.IndexRepositoryCommandV2;
 import com.razeef.bugbrother.indexes.dto.response.IndexGenerationAllocation;
 import com.razeef.bugbrother.indexes.dto.response.IndexTaskSubmissionResult;
 import com.razeef.bugbrother.repositories.dto.response.RepositoryResponse;
-import com.razeef.bugbrother.tasks.exception.TaskPublicationException;
 import com.razeef.bugbrother.tasks.messaging.TaskCommandPublisher;
 import com.razeef.bugbrother.tasks.model.TaskEntity;
 import com.razeef.bugbrother.tasks.model.TaskType;
 import com.razeef.bugbrother.tasks.service.TaskService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -37,6 +37,7 @@ public class IndexTaskSubmissionService {
         this.commandPublisher = commandPublisher;
     }
 
+    @Transactional
     public IndexTaskSubmissionResult submitForCurrentUser(
             RepositoryResponse repository,
             String githubToken
@@ -48,6 +49,7 @@ public class IndexTaskSubmissionService {
         );
     }
 
+    @Transactional
     public IndexTaskSubmissionResult submitForUser(
             String userId,
             RepositoryResponse repository,
@@ -89,16 +91,7 @@ public class IndexTaskSubmissionService {
                 Instant.now()
         );
 
-        try {
-            commandPublisher.publish(TOPIC, task.getTaskId(), command);
-            return new IndexTaskSubmissionResult(task, true);
-        } catch (TaskPublicationException exception) {
-            if (generation.buildRequired()) {
-                generationService.discardPreparedGeneration(
-                        generation.generationId()
-                );
-            }
-            return new IndexTaskSubmissionResult(task, false);
-        }
+        commandPublisher.stage(TOPIC, task.getTaskId(), command);
+        return new IndexTaskSubmissionResult(task, true);
     }
 }

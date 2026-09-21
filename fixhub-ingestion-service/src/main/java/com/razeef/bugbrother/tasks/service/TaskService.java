@@ -3,6 +3,7 @@ package com.razeef.bugbrother.tasks.service;
 import com.razeef.bugbrother.auth.service.CurrentUserService;
 import com.razeef.bugbrother.tasks.dto.response.TaskAcceptedResponse;
 import com.razeef.bugbrother.tasks.dto.response.TaskResponse;
+import com.razeef.bugbrother.tasks.dto.response.InternalTaskExecutionState;
 import com.razeef.bugbrother.tasks.exception.TaskNotFoundException;
 import com.razeef.bugbrother.tasks.model.ProcessedTaskEvent;
 import com.razeef.bugbrother.tasks.model.TaskEntity;
@@ -23,6 +24,13 @@ import java.util.UUID;
 
 @Service
 public class TaskService {
+
+    @Transactional(readOnly = true)
+    public InternalTaskExecutionState getExecutionState(UUID taskId) {
+        return taskRepository.findById(taskId)
+                .map(InternalTaskExecutionState::from)
+                .orElseThrow(() -> new TaskNotFoundException(taskId));
+    }
 
     private final TaskRepository taskRepository;
     private final ProcessedTaskEventRepository processedTaskEventRepository;
@@ -154,7 +162,7 @@ public class TaskService {
         TaskEntity task = taskRepository
                 .findLockedByTaskId(event.taskId())
                 .orElseThrow(() ->
-                        new IllegalStateException(
+                        new IllegalArgumentException(
                                 "Received an event for unknown task: "
                                         + event.taskId()
                         )
@@ -182,7 +190,7 @@ public class TaskService {
 
         TaskEntity task = taskRepository
                 .findLockedByTaskId(event.taskId())
-                .orElseThrow(() -> new IllegalStateException(
+                .orElseThrow(() -> new IllegalArgumentException(
                         "Received an event for unknown task: " + event.taskId()
                 ));
 

@@ -18,6 +18,11 @@ import java.util.UUID;
 
 public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 
+    boolean existsByGenerationIdAndStatusNotIn(
+            UUID generationId,
+            Collection<TaskStatus> terminalStatuses
+    );
+
     Optional<TaskEntity> findByTaskIdAndUserId(
             UUID taskId,
             String userId

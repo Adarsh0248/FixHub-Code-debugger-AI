@@ -299,6 +299,17 @@ public class IndexGenerationEntity {
         updatedAt = now;
     }
 
+    public void beginRetiredCleanup() {
+        if (status != IndexGenerationStatus.RETIRED) {
+            throw new IllegalStateException(
+                    "Only a retired generation can enter retention cleanup"
+            );
+        }
+
+        status = IndexGenerationStatus.CLEANING;
+        updatedAt = Instant.now();
+    }
+
     public long vectorClientIdAsLong() {
         return Long.parseUnsignedLong(vectorClientId);
     }

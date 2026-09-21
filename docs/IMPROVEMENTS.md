@@ -63,7 +63,23 @@ Renamed file   -> detect rename and decide whether vectors can be reused
 
 The resulting generation must still behave like a complete immutable snapshot. Searches must use exactly one generation.
 
-### Required vector-platform improvement
+### Implemented embedding cache foundation
+
+The BugBrother worker uses `line-window-v2`, which keeps the immutable commit
+SHA in chunk identity and manifest metadata but removes it from embedding text.
+Thus unchanged source at a new commit produces the same embedding input.
+On the gateway's BugBrother branch, `embed-ingest` keeps a bounded in-memory
+LRU cache keyed by model and SHA-256 of the exact input text. A cache hit skips
+model inference; the gateway still inserts a fresh vector under the new
+generation's own client ID and label. The default cache size is 2,048 entries
+and is configurable through `EMBED_CACHE_MAX_ENTRIES`. Cache contents disappear
+when the embedding container restarts.
+
+Full source fetching, chunking, manifest storage, and vector insertion still
+occur for every generation. Incremental generation building remains future
+work.
+
+### Further vector-platform options
 
 Every generation currently receives a different `vectorClientId`. Therefore, vectors belonging to Generation 1 cannot be referenced directly by Generation 2.
 
@@ -73,7 +89,8 @@ Possible solutions:
 2. Cache embeddings by model ID plus embedding-text hash, then insert cached vectors under the new generation's labels.
 3. Use a stable repository client ID and encode the generation into labels or metadata, provided the engine can filter strictly by generation.
 
-Embedding caching is likely the safest first optimization because generations remain isolated while repeated model work is avoided.
+Persistent or shared embedding caches could avoid repeated model work across
+container restarts while keeping generations isolated.
 
 ## 2. Detecting repository changes
 
@@ -146,20 +163,19 @@ If the source branch moves during processing, the task fails with `STALE_BASE_CO
 
 The previous active generation remains usable while a replacement is building. Activation happens only after every chunk in the new generation is confirmed. The previous generation then becomes `RETIRED`.
 
-### Missing improvement
+### Implemented retention job
 
-Retired generations are not yet removed automatically. Without retention cleanup, PostgreSQL and vector storage will grow continuously.
+The cleanup scheduler finds retired generations older than
+`INDEX_RETIRED_RETENTION` (seven days by default). Before moving one to
+`CLEANING`, it locks the generation row and checks that no active pointer or
+unfinished task still references it. The existing cleanup worker then deletes
+its vector labels using the generation-specific vector client ID. Once vector
+deletion succeeds, ingestion deletes the generation and its PostgreSQL files,
+chunks, and dependency graph. Terminal task records remain; their generation
+foreign key is set to null by the existing migration.
 
-### Future retention job
-
-1. Keep retired generations for a configurable period, such as seven days.
-2. Ensure no running task references the generation.
-3. Change it to a cleanup state.
-4. Delete every vector using its stored labels.
-5. Confirm deletion.
-6. Delete its PostgreSQL generation, files, and chunks.
-
-Retention should be configurable by repository size, available storage, and audit requirements.
+Future improvements: retention rules by repository size, stored per-label
+deletion progress, and a durable outbox for cleanup command delivery.
 
 ## 5. Retrieval still uses the legacy model
 
@@ -347,19 +363,30 @@ Generated code is currently committed without a reliable build or test validatio
 
 The worker must prevent arbitrary repository scripts from accessing host secrets or unrestricted infrastructure.
 
-## 12. Vector insertion throughput and rate limiting
+## 12. Vector insertion throughput
 
-### Current limitation
+### Current feature-branch behavior
 
-The gateway token bucket is currently hard-coded with a capacity of 10 and a refill rate of one request per second. Large chunk submissions can exceed this limit. Cleanup already retries rate-limited deletes, but insertion needs a proper bulk strategy.
+The gateway's `feature/search-client-id-isolation` branch does not apply the
+token-bucket limiter to Search, Insert, or Delete. BugBrother can submit all
+chunks without a rate-limit rejection from that branch. Gateway `master`
+retains its client-facing limiter.
+
+The worker still sends one synchronous Insert call per chunk. Gateway `Insert`
+returns after Kafka accepts the event, while vector embedding and insertion
+happen asynchronously. Large repositories can therefore build a Kafka backlog
+and consume significant disk or vector capacity even without rate limiting.
+
+The worker now retries transient Insert failures (`UNAVAILABLE`,
+`DEADLINE_EXCEEDED`, and `RESOURCE_EXHAUSTED`) up to four attempts with
+exponential backoff and a ten-second deadline per attempt. Every retry uses
+the original chunk label and correlation ID. Permanent failures and exhausted
+retries still trigger the existing generation failure and cleanup path.
 
 ### Future improvement
 
-- Make rate-limit settings configurable.
-- Add bounded client-side insert retry with backoff and jitter.
 - Consider a batch insert API.
-- Separate search, insert, and delete quotas.
-- Add retry-after information to rate-limit responses.
+- Monitor Kafka consumer lag and cap concurrent indexing tasks.
 - Persist submission progress so a restarted worker does not unnecessarily resubmit confirmed chunks.
 
 ## 13. Index failure and cleanup durability
@@ -385,15 +412,31 @@ The gateway token bucket is currently hard-coded with a capacity of 10 and a ref
 
 ## 14. Task and event reliability
 
-### Future improvements
+### Implemented foundation
 
-- Use an outbox pattern so PostgreSQL state changes and Kafka publication cannot disagree.
-- Make every command and status event explicitly versioned.
-- Persist processed command IDs for worker-side idempotency.
-- Add dead-letter topics for malformed or permanently failing events.
-- Record retry count and the last failure.
-- Prevent an old delayed event from changing a newer task state.
-- Remove GitHub access tokens from long-lived Kafka payloads by using short-lived credentials or encrypted references.
+- New tasks and their command outbox rows are created in one PostgreSQL
+  transaction. A scheduled relay retries Kafka publication and clears the
+  payload after acknowledgement.
+- Workers read authoritative task state before processing a command. Terminal
+  tasks are no-ops; redelivered index commands reuse persisted submission IDs
+  and resend only unconfirmed chunks.
+- Task status events use Kafka with an authenticated ingestion API fallback.
+  Both paths share processed-event ID and sequence checks.
+- A fix branch is named from its task ID and verified on replay, preventing a
+  second branch when completion status was lost.
+- Malformed task and status events are sent to dead-letter topics; transient
+  listener failures retry.
+
+See [TASK_RELIABILITY.md](TASK_RELIABILITY.md) for flows and timeout behavior.
+
+### Further improvements
+
+- Add an operator workflow for inspecting and replaying dead-letter records.
+- Replace long-lived GitHub tokens in command payloads with encrypted credential
+  references or short-lived credentials.
+- Add outbox delivery and consumer retry metrics and alerting.
+- Exercise every crash boundary in integration tests with real Kafka and
+  PostgreSQL.
 
 ## 15. Private repository and secret protection
 
@@ -491,8 +534,8 @@ Use the same task ID, generation ID, event ID, and correlation ID across structu
 6. Replace per-file GitHub commits with one atomic tree commit.
 7. Add isolated build and test validation.
 8. Detect stale branch heads before writing.
-9. Add post-merge reindex detection and GitHub webhooks.
-10. Add retired-generation retention cleanup.
+9. Add post-merge-specific events and webhook delivery outbox guarantees.
+10. Tune retired-generation retention and cleanup progress for large indexes.
 11. Add embedding caching and incremental generation building.
 12. Add outbox, dead-letter handling, security hardening, metrics, and full integration tests.
 
@@ -508,3 +551,5 @@ Use the same task ID, generation ID, event ID, and correlation ID across structu
 - Previous active generation remains available during replacement indexing.
 - Safe cleanup distinction before and after vector submission.
 - Idempotent gateway deletion for failed generation cleanup.
+- Retired generation retention and reuse of the vector cleanup pipeline.
+- Verified GitHub push webhook detection for tracked branches and fresh commit generations.

@@ -22,10 +22,27 @@ import com.razeef.bugbrother.indexes.dto.request.ChunkSubmissionsRequest;
 import java.util.List;
 import java.util.UUID;
 import com.razeef.bugbrother.indexes.dto.response.IndexCleanupPlanResponse;
+import com.razeef.bugbrother.indexes.dto.response.IndexSubmissionRecoveryState;
+import com.razeef.bugbrother.indexes.dto.response.PendingChunkSubmissionResponse;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @RestController
 @RequestMapping("/internal/index-generations")
 public class InternalIndexManifestController {
+
+    @GetMapping("/{generationId}/recovery-state")
+    public ResponseEntity<IndexSubmissionRecoveryState> recoveryState(
+            @PathVariable UUID generationId) {
+        return ResponseEntity.ok(manifestService.recoveryState(generationId));
+    }
+
+    @GetMapping("/{generationId}/pending-submissions")
+    public ResponseEntity<List<PendingChunkSubmissionResponse>> pendingSubmissions(
+            @PathVariable UUID generationId,
+            @RequestParam(defaultValue = "") String afterChunkId) {
+        return ResponseEntity.ok(manifestService.pendingSubmissions(
+                generationId, afterChunkId));
+    }
 
     private static final int MAX_FILE_BATCH_SIZE = 20;
     private static final int MAX_CHUNK_BATCH_SIZE = 100;

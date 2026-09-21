@@ -11,9 +11,7 @@ import com.razeef.bugbrother.auth.service.GitAuthService;
 import com.razeef.bugbrother.tasks.dto.response.TaskAcceptedResponse;
 import com.razeef.bugbrother.tasks.messaging.TaskCommandPublisher;
 import com.razeef.bugbrother.tasks.model.TaskEntity;
-import com.razeef.bugbrother.tasks.exception.TaskPublicationException;
 import com.razeef.bugbrother.tasks.service.TaskService;
-import com.razeef.bugbrother.tasks.model.TaskStatus;
 import com.razeef.bugbrother.tasks.model.TaskType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +22,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -59,6 +58,7 @@ public class GitAiDebug {
         }
 
     @PostMapping("/debug/{owner}/{repo}")
+    @Transactional
     public ResponseEntity<?> debug(
             @PathVariable String owner,
             @PathVariable String repo,
@@ -153,21 +153,7 @@ public class GitAiDebug {
                         Instant.now()
                 );
 
-        try {
-            commandPublisher.publish(
-                    TOPIC,
-                    task.getTaskId(),
-                    command
-            );
-        } catch (TaskPublicationException exception) {
-            return ResponseEntity
-                    .status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(new TaskAcceptedResponse(
-                            task.getTaskId(),
-                            TaskStatus.FAILED,
-                            "/api/tasks/" + task.getTaskId()
-                    ));
-        }
+        commandPublisher.stage(TOPIC, task.getTaskId(), command);
 
         return ResponseEntity
                 .accepted()

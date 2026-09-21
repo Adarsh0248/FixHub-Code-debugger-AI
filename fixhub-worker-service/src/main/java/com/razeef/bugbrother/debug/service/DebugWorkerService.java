@@ -5,8 +5,11 @@ import com.razeef.bugbrother.github.model.AtomicCommitResult;
 import com.razeef.bugbrother.github.exception.GitHubCommitException;
 import com.razeef.bugbrother.github.exception.StaleBaseCommitException;
 import com.razeef.bugbrother.messaging.service.TaskStatusPublisher;
+import com.razeef.bugbrother.messaging.exception.TaskStatusPublicationException;
 import com.razeef.bugbrother.vector.service.VectorSearchService;
 import com.razeef.bugbrother.retrieval.client.IndexContextClient;
+import com.razeef.bugbrother.indexing.client.ManifestSubmissionClient;
+import com.razeef.bugbrother.indexing.model.TaskExecutionState;
 import com.razeef.bugbrother.retrieval.exception.ContextBudgetExceededException;
 import com.razeef.bugbrother.retrieval.exception.ContextExpansionException;
 import com.razeef.bugbrother.retrieval.model.ContextBundle;
@@ -39,6 +42,7 @@ public class DebugWorkerService {
     private final ContextBundleService contextBundleService;
     private final IterativeModelGenerationService modelGenerationService;
     private final DebugResponseValidator debugResponseValidator;
+    private final ManifestSubmissionClient manifestClient;
 
     public DebugWorkerService(
         CommitService commitService,
@@ -47,7 +51,8 @@ public class DebugWorkerService {
         IndexContextClient indexContextClient,
         ContextBundleService contextBundleService,
         IterativeModelGenerationService modelGenerationService,
-        DebugResponseValidator debugResponseValidator
+        DebugResponseValidator debugResponseValidator,
+        ManifestSubmissionClient manifestClient
         ) {
         this.commitService = commitService;
         this.vectorSearchService = vectorSearchService;
@@ -56,6 +61,7 @@ public class DebugWorkerService {
         this.contextBundleService = contextBundleService;
         this.modelGenerationService = modelGenerationService;
         this.debugResponseValidator = debugResponseValidator;
+        this.manifestClient = manifestClient;
         }
 
     @KafkaListener(
@@ -63,7 +69,17 @@ public class DebugWorkerService {
             groupId = "code-guardian-debug-v3-group"
     )
     public void consumeTask(DebugRepositoryCommandV3 command) {
-        long sequence = 1;
+        TaskExecutionState taskState = manifestClient.fetchTaskState(
+                command.taskId());
+        if (taskState == null
+                || !command.taskId().equals(taskState.taskId())) {
+            throw new IllegalStateException(
+                    "Debug task state does not match the command");
+        }
+        if (taskState.terminal()) {
+            return;
+        }
+        long sequence = taskState.eventSequence() + 1;
 
         try {
             statusPublisher.running(
@@ -208,6 +224,7 @@ public class DebugWorkerService {
 
             AtomicCommitResult commitResult =
                     commitService.createAtomicFixCommit(
+                    command.taskId(),
                     command.owner(),
                     command.repo(),
                     command.branch(),
@@ -233,6 +250,9 @@ public class DebugWorkerService {
                             + "; patch validation will be added in Phase 7"
             );
         } catch (Exception exception) {
+            if (exception instanceof TaskStatusPublicationException) {
+                throw exception;
+            }
             statusPublisher.failed(
                     command.taskId(),
                     sequence,

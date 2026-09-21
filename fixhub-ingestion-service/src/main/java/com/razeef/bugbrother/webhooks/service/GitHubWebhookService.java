@@ -16,6 +16,7 @@ import com.razeef.bugbrother.webhooks.repository.GitHubWebhookDeliveryRepository
 import com.razeef.bugbrother.webhooks.security.GitHubWebhookSignatureVerifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -57,6 +58,7 @@ public class GitHubWebhookService {
         this.submissionService = submissionService;
     }
 
+    @Transactional
     public void handle(
             String signature,
             String eventType,

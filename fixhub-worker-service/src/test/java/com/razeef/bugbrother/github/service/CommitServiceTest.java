@@ -1,6 +1,7 @@
 package com.razeef.bugbrother.github.service;
 
 import com.razeef.bugbrother.github.client.GitHubGitDataClient;
+import com.razeef.bugbrother.github.exception.GitHubCommitException;
 import com.razeef.bugbrother.github.exception.StaleBaseCommitException;
 import com.razeef.bugbrother.github.model.AtomicCommitResult;
 import com.razeef.bugbrother.github.model.GitTreeEntry;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -21,6 +23,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CommitServiceTest {
+
+    private static final UUID TASK_ID = UUID.fromString(
+            "11111111-1111-1111-1111-111111111111");
+    private static final String COMMIT_MESSAGE =
+            "BugBrother: apply validated fix for task " + TASK_ID;
 
     private GitHubGitDataClient gitHubClient;
     private CommitService commitService;
@@ -63,11 +70,12 @@ class CommitServiceTest {
                 "repo",
                 "new-tree",
                 "base-commit",
-                "BugBrother: apply validated fix",
+                COMMIT_MESSAGE,
                 "token"
         )).thenReturn("new-commit");
 
         AtomicCommitResult result = commitService.createAtomicFixCommit(
+                TASK_ID,
                 "owner",
                 "repo",
                 "feature/login",
@@ -80,6 +88,9 @@ class CommitServiceTest {
         );
 
         InOrder order = inOrder(gitHubClient);
+        order.verify(gitHubClient).findBranchHead(
+                "owner", "repo", "ai-fix/task-" + TASK_ID, "token"
+        );
         order.verify(gitHubClient).getBranchHead(
                 "owner", "repo", "feature/login", "token"
         );
@@ -107,7 +118,7 @@ class CommitServiceTest {
                 "repo",
                 "new-tree",
                 "base-commit",
-                "BugBrother: apply validated fix",
+                COMMIT_MESSAGE,
                 "token"
         );
         order.verify(gitHubClient).getBranchHead(
@@ -122,6 +133,44 @@ class CommitServiceTest {
         );
 
         assertEquals("new-commit", result.commitSha());
+        assertEquals("ai-fix/task-" + TASK_ID, result.branchName());
+    }
+
+    @Test
+    void reusesExistingTaskBranchAfterWorkerReplay() {
+        when(gitHubClient.findBranchHead(
+                "owner", "repo", "ai-fix/task-" + TASK_ID, "token"
+        )).thenReturn("fix-commit");
+        when(gitHubClient.getCommitIdentity(
+                "owner", "repo", "fix-commit", "token"
+        )).thenReturn(new GitHubGitDataClient.GitCommitIdentity(
+                COMMIT_MESSAGE, "base-commit"));
+
+        AtomicCommitResult result = commitService.createAtomicFixCommit(
+                TASK_ID, "owner", "repo", "main", "base-commit",
+                List.of(new CommitService.FixedFile("src/A.java", "fixed")),
+                "token");
+
+        assertEquals("fix-commit", result.commitSha());
+        verify(gitHubClient, never()).createBlob(
+                anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void rejectsExistingTaskBranchWithUnexpectedParent() {
+        when(gitHubClient.findBranchHead(
+                "owner", "repo", "ai-fix/task-" + TASK_ID, "token"
+        )).thenReturn("other-commit");
+        when(gitHubClient.getCommitIdentity(
+                "owner", "repo", "other-commit", "token"
+        )).thenReturn(new GitHubGitDataClient.GitCommitIdentity(
+                COMMIT_MESSAGE, "different-base"));
+
+        assertThrows(GitHubCommitException.class,
+                () -> commitService.createAtomicFixCommit(
+                        TASK_ID, "owner", "repo", "main", "base-commit",
+                        List.of(new CommitService.FixedFile(
+                                "src/A.java", "fixed")), "token"));
     }
 
     @Test
@@ -133,6 +182,7 @@ class CommitServiceTest {
         assertThrows(
                 StaleBaseCommitException.class,
                 () -> commitService.createAtomicFixCommit(
+                        TASK_ID,
                         "owner",
                         "repo",
                         "main",

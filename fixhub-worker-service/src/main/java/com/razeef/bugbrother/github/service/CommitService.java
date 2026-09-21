@@ -30,6 +30,7 @@ public class CommitService {
     }
 
     public AtomicCommitResult createAtomicFixCommit(
+            UUID taskId,
             String owner,
             String repo,
             String selectedBranch,
@@ -37,6 +38,9 @@ public class CommitService {
             List<FixedFile> fixedFiles,
             String githubToken
     ) {
+        if (taskId == null) {
+            throw new GitHubCommitException("Task ID is required");
+        }
         requireText(owner, "owner");
         requireText(repo, "repo");
         requireText(selectedBranch, "selectedBranch");
@@ -47,6 +51,16 @@ public class CommitService {
             throw new GitHubCommitException(
                     "At least one validated file is required"
             );
+        }
+
+        String fixBranch = "ai-fix/task-" + taskId;
+        String commitMessage = "BugBrother: apply validated fix for task "
+                + taskId;
+        String existingHead = gitHubClient.findBranchHead(
+                owner, repo, fixBranch, githubToken);
+        if (existingHead != null) {
+            return verifyExistingFixBranch(owner, repo, fixBranch,
+                    existingHead, baseCommitSha, commitMessage, githubToken);
         }
 
         ensureBranchStillAtBase(
@@ -111,7 +125,7 @@ public class CommitService {
                 repo,
                 newTreeSha,
                 baseCommitSha,
-                "BugBrother: apply validated fix",
+                commitMessage,
                 githubToken
         );
 
@@ -123,25 +137,41 @@ public class CommitService {
                 githubToken
         );
 
-        String fixBranch = "ai-fix/" + UUID.randomUUID();
-        gitHubClient.createBranch(
-                owner,
-                repo,
-                fixBranch,
-                newCommitSha,
-                githubToken
-        );
+        try {
+            gitHubClient.createBranch(owner, repo, fixBranch,
+                    newCommitSha, githubToken);
+        } catch (GitHubCommitException exception) {
+            String publishedHead = gitHubClient.findBranchHead(
+                    owner, repo, fixBranch, githubToken);
+            if (publishedHead == null) {
+                throw exception;
+            }
+            return verifyExistingFixBranch(owner, repo, fixBranch,
+                    publishedHead, baseCommitSha, commitMessage,
+                    githubToken);
+        }
 
-        return new AtomicCommitResult(
-                fixBranch,
-                newCommitSha,
-                "https://github.com/"
-                        + owner
-                        + "/"
-                        + repo
-                        + "/tree/"
-                        + fixBranch
-        );
+        return result(owner, repo, fixBranch, newCommitSha);
+    }
+
+    private AtomicCommitResult verifyExistingFixBranch(
+            String owner, String repo, String branch, String head,
+            String baseCommitSha, String expectedMessage, String token) {
+        GitHubGitDataClient.GitCommitIdentity identity =
+                gitHubClient.getCommitIdentity(owner, repo, head, token);
+        if (!baseCommitSha.equals(identity.parentSha())
+                || !expectedMessage.equals(identity.message())) {
+            throw new GitHubCommitException(
+                    "Existing fix branch has changed; refusing to overwrite it");
+        }
+        return result(owner, repo, branch, head);
+    }
+
+    private AtomicCommitResult result(String owner, String repo,
+            String branch, String sha) {
+        return new AtomicCommitResult(branch, sha,
+                "https://github.com/" + owner + "/" + repo
+                        + "/tree/" + branch);
     }
 
     private void ensureBranchStillAtBase(

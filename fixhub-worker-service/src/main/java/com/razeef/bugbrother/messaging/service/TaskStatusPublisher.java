@@ -1,9 +1,12 @@
 package com.razeef.bugbrother.messaging.service;
 
 import com.razeef.bugbrother.events.TaskStatusEventV2;
+import com.razeef.bugbrother.messaging.exception.TaskStatusPublicationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -18,14 +21,24 @@ public class TaskStatusPublisher {
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final Duration publishTimeout;
+    private final WebClient ingestionClient;
+    private final String workerKey;
 
     public TaskStatusPublisher(
             KafkaTemplate<String, Object> kafkaTemplate,
             @Value("${bugbrother.kafka.publish-timeout:10s}")
-            Duration publishTimeout
+            Duration publishTimeout,
+            WebClient.Builder webClientBuilder,
+            @Value("${bugbrother.ingestion.base-url}") String ingestionBaseUrl,
+            @Value("${bugbrother.internal.worker-key}") String workerKey
     ) {
         this.kafkaTemplate = kafkaTemplate;
         this.publishTimeout = publishTimeout;
+        this.ingestionClient = webClientBuilder
+                .baseUrl(ingestionBaseUrl)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, "application/json")
+                .build();
+        this.workerKey = workerKey;
     }
 
     public void running(
@@ -174,10 +187,19 @@ public class TaskStatusPublisher {
                 TimeUnit.MILLISECONDS
             );
         }catch(Exception exception){
-            throw new IllegalStateException(
-                "Could not publish task status",
-                exception
-            );
+            try {
+                ingestionClient.post()
+                        .uri("/internal/tasks/status-events")
+                        .header("X-BugBrother-Worker-Key", workerKey)
+                        .bodyValue(event)
+                        .retrieve()
+                        .toBodilessEntity()
+                        .timeout(publishTimeout)
+                        .block();
+            } catch (RuntimeException fallbackFailure) {
+                fallbackFailure.addSuppressed(exception);
+                throw new TaskStatusPublicationException(fallbackFailure);
+            }
         }
     }
 

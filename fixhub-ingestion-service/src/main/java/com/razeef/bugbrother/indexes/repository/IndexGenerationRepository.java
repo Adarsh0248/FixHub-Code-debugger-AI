@@ -13,6 +13,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.Collection;
 import java.util.List;
+import java.time.Instant;
+import org.springframework.data.domain.Pageable;
 
 public interface IndexGenerationRepository
         extends JpaRepository<IndexGenerationEntity, UUID> {
@@ -42,6 +44,12 @@ public interface IndexGenerationRepository
 
     List<IndexGenerationEntity> findByStatusOrderByUpdatedAtAsc(
             IndexGenerationStatus status
+    );
+
+    List<IndexGenerationEntity> findByStatusAndRetiredAtBeforeOrderByRetiredAtAsc(
+            IndexGenerationStatus status,
+            Instant cutoff,
+            Pageable pageable
     );
 }
 

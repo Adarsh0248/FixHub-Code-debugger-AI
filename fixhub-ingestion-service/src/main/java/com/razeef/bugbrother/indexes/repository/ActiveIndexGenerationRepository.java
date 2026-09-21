@@ -17,6 +17,8 @@ public interface ActiveIndexGenerationRepository
                 UUID
         > {
 
+    boolean existsByGenerationId(UUID generationId);
+
     Optional<ActiveIndexGenerationEntity>
     findByUserIdAndRepositoryIdAndBranch(
             String userId,

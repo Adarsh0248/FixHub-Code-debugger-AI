@@ -184,6 +184,15 @@ public class IndexGenerationService {
             );
         }
 
+        for (TaskEntity task : taskRepository
+                .findLockedByGenerationIdAndStatusNotIn(
+                        generationId,
+                        List.of(TaskStatus.COMPLETED, TaskStatus.FAILED))) {
+            task.failIndexGeneration("INDEX_PREPARATION_FAILED",
+                    "Indexing stopped before vector submission; retry indexing");
+            task.detachIndexGeneration();
+        }
+
         generationRepository.delete(generation);
         generationRepository.flush();
     }

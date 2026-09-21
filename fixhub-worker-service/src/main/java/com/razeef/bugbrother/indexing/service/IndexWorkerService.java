@@ -5,14 +5,20 @@ import com.razeef.bugbrother.chunking.service.DeterministicRepositoryChunker;
 import com.razeef.bugbrother.events.IndexRepositoryCommandV2;
 import com.razeef.bugbrother.indexing.client.ManifestSubmissionClient;
 import com.razeef.bugbrother.messaging.service.TaskStatusPublisher;
+import com.razeef.bugbrother.messaging.exception.TaskStatusPublicationException;
 import com.razeef.bugbrother.source.model.RepositorySourceFile;
 import com.razeef.bugbrother.source.service.GitHubRevisionSourceService;
 import com.razeef.bugbrother.vector.service.VectorSearchService;
 import com.razeef.bugbrother.indexing.model.PreparedChunkSubmission;
+import com.razeef.bugbrother.indexing.model.IndexSubmissionRecoveryState;
+import com.razeef.bugbrother.indexing.model.PendingChunkSubmission;
+import com.razeef.bugbrother.indexing.model.TaskExecutionState;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClientException;
 import java.util.UUID;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 @Service
 public class IndexWorkerService {
@@ -46,9 +52,23 @@ public class IndexWorkerService {
     ) {
         long sequence = 1;
         boolean vectorSubmissionStarted = false;
+        boolean recoveryStateKnown = false;
+        boolean replayingSubmission = false;
 
         try {
             validateCommand(command);
+
+            TaskExecutionState taskState = manifestClient.fetchTaskState(
+                    command.taskId());
+            if (taskState == null
+                    || !command.taskId().equals(taskState.taskId())) {
+                throw new IllegalStateException(
+                        "Index task state does not match the command");
+            }
+            if (taskState.terminal()) {
+                return;
+            }
+            sequence = taskState.eventSequence() + 1;
 
             statusPublisher.running(
                     command.taskId(),
@@ -58,10 +78,28 @@ public class IndexWorkerService {
             );
 
             if (!command.buildRequired()) {
-                handleReusableGeneration(
-                        command,
-                        sequence
-                );
+                handleReusableGeneration(command, sequence);
+                return;
+            }
+
+            IndexSubmissionRecoveryState recoveryState =
+                    manifestClient.fetchRecoveryState(command.generationId());
+            if (recoveryState == null
+                    || !command.vectorClientId().equals(
+                            recoveryState.vectorClientId())) {
+                throw new IllegalStateException(
+                        "Index recovery state does not match the command");
+            }
+            recoveryStateKnown = true;
+
+            if (!"BUILDING".equals(recoveryState.status())) {
+                return;
+            }
+
+            if (recoveryState.vectorSubmissionStarted()) {
+                vectorSubmissionStarted = true;
+                replayingSubmission = true;
+                resumePendingSubmissions(command);
                 return;
             }
 
@@ -110,7 +148,8 @@ public class IndexWorkerService {
                 chunks.stream()
                         .map(chunk ->
                                 new PreparedChunkSubmission(
-                                        UUID.randomUUID(),
+                                        submissionId(command.generationId(),
+                                                chunk.chunkId()),
                                         chunk
                                 )
                         )
@@ -169,6 +208,13 @@ public class IndexWorkerService {
                             + "acknowledgements"
             );
         } catch (Exception exception) {
+            if (!recoveryStateKnown
+                    || exception instanceof TaskStatusPublicationException
+                    || (replayingSubmission
+                            && exception instanceof WebClientException)) {
+                throw exception;
+            }
+
             String userMessage = vectorSubmissionStarted
                     ? "Indexing failed after vector submission began. "
                             + "Automatic cleanup was scheduled. Retry indexing. Cause: "
@@ -323,6 +369,29 @@ public class IndexWorkerService {
             }
         } catch (RuntimeException reportingFailure) {
             failure.addSuppressed(reportingFailure);
+        }
+    }
+
+    private UUID submissionId(UUID generationId, String chunkId) {
+        return UUID.nameUUIDFromBytes((generationId + ":" + chunkId)
+                .getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void resumePendingSubmissions(IndexRepositoryCommandV2 command) {
+        String afterChunkId = "";
+        while (true) {
+            List<PendingChunkSubmission> page =
+                    manifestClient.fetchPendingSubmissions(
+                            command.generationId(), afterChunkId);
+            if (page.isEmpty()) {
+                return;
+            }
+
+            for (PendingChunkSubmission submission : page) {
+                vectorSearchService.submitStoredChunk(
+                        command.vectorClientId(), submission);
+            }
+            afterChunkId = page.get(page.size() - 1).chunkId();
         }
     }
 

@@ -136,10 +136,19 @@ server.port=8080
 spring.security.oauth2.client.registration.github.client-id=YOUR_CLIENT_ID
 spring.security.oauth2.client.registration.github.client-secret=YOUR_CLIENT_SECRET
 
+# Secret configured on the GitHub repository webhook
+bugbrother.github.webhook-secret=YOUR_WEBHOOK_SECRET
+
 # Kafka
 spring.kafka.bootstrap-servers=localhost:9092
 
 ```
+
+GitHub push reindexing uses `POST /webhooks/github`. Configure a repository
+webhook with the same `GITHUB_WEBHOOK_SECRET`, select the `application/json`
+content type, and enable the `Pushes` event. BugBrother accepts only pushes to
+branches that already have an active index generation. It verifies the
+`X-Hub-Signature-256` header and ignores duplicate delivery IDs.
 
 ### Worker Service (`fixhub-worker-service/src/main/resources/application.properties`)
 

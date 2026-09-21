@@ -10,16 +10,62 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import com.razeef.bugbrother.indexing.model.PreparedChunkSubmission;
+import com.razeef.bugbrother.indexing.model.IndexSubmissionRecoveryState;
+import com.razeef.bugbrother.indexing.model.PendingChunkSubmission;
+import com.razeef.bugbrother.indexing.model.TaskExecutionState;
+import org.springframework.core.ParameterizedTypeReference;
 import com.razeef.bugbrother.indexing.model.IndexCleanupPlan;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
 public class ManifestSubmissionClient {
+
+    private static final Duration RECOVERY_REQUEST_TIMEOUT =
+            Duration.ofSeconds(10);
+
+    public TaskExecutionState fetchTaskState(UUID taskId) {
+        return webClient.get()
+                .uri("/internal/tasks/{id}/state", taskId)
+                .header(WORKER_KEY_HEADER, workerKey)
+                .retrieve()
+                .bodyToMono(TaskExecutionState.class)
+                .timeout(RECOVERY_REQUEST_TIMEOUT)
+                .block();
+    }
+
+    public IndexSubmissionRecoveryState fetchRecoveryState(
+            UUID generationId) {
+        return webClient.get()
+                .uri("/internal/index-generations/{id}/recovery-state",
+                        generationId)
+                .header(WORKER_KEY_HEADER, workerKey)
+                .retrieve()
+                .bodyToMono(IndexSubmissionRecoveryState.class)
+                .timeout(RECOVERY_REQUEST_TIMEOUT)
+                .block();
+    }
+
+    public List<PendingChunkSubmission> fetchPendingSubmissions(
+            UUID generationId, String afterChunkId) {
+        List<PendingChunkSubmission> result = webClient.get()
+                .uri(builder -> builder
+                        .path("/internal/index-generations/{id}/pending-submissions")
+                        .queryParam("afterChunkId", afterChunkId)
+                        .build(generationId))
+                .header(WORKER_KEY_HEADER, workerKey)
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<
+                        List<PendingChunkSubmission>>() {})
+                .timeout(RECOVERY_REQUEST_TIMEOUT)
+                .block();
+        return result == null ? List.of() : result;
+    }
 
     private static final String WORKER_KEY_HEADER =
             "X-BugBrother-Worker-Key";

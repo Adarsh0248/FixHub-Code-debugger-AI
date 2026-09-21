@@ -1,52 +1,50 @@
 package com.razeef.bugbrother.tasks.messaging;
 
-import com.razeef.bugbrother.tasks.exception.TaskPublicationException;
-import com.razeef.bugbrother.tasks.service.TaskService;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaTemplate;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.razeef.bugbrother.events.DebugRepositoryCommandV3;
+import com.razeef.bugbrother.events.IndexRepositoryCommandV2;
+import com.razeef.bugbrother.tasks.model.TaskCommandOutboxEntity;
+import com.razeef.bugbrother.tasks.repository.TaskCommandOutboxRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
-@Service 
+@Service
 public class TaskCommandPublisher {
-    
-    private final KafkaTemplate<String, Object> kafkaTemplate;
-    private final TaskService taskService;
-    private final Duration publishTimeout;
+
+    private final TaskCommandOutboxRepository outboxRepository;
+    private final ObjectMapper objectMapper;
 
     public TaskCommandPublisher(
-        KafkaTemplate<String, Object> kafkaTemplate,
-        TaskService taskService,
-        @Value("${bugbrother.kafka.publish-timeout:10s}")
-        Duration publishTimeout
-    ){
-        this.kafkaTemplate = kafkaTemplate;
-        this.taskService = taskService;
-        this.publishTimeout = publishTimeout;
+            TaskCommandOutboxRepository outboxRepository,
+            ObjectMapper objectMapper
+    ) {
+        this.outboxRepository = outboxRepository;
+        this.objectMapper = objectMapper;
     }
 
-    public void publish(
-        String topic,
-        UUID taskId,
-        Object command
-    ){
-        try{
-            kafkaTemplate.send(topic, taskId.toString(), command)
-            .get(
-                publishTimeout.toMillis(),
-                TimeUnit.MILLISECONDS
-            );
-        } catch(Exception exception){
-            taskService.markPublicationFailed(
-                taskId,
-                exception.getMessage()
-            );
+    // The caller's transaction must save the task and this command together.
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void stage(String topic, UUID taskId, Object command) {
+        String type;
+        if (command instanceof IndexRepositoryCommandV2) {
+            type = "INDEX_V2";
+        } else if (command instanceof DebugRepositoryCommandV3) {
+            type = "DEBUG_V3";
+        } else {
+            throw new IllegalArgumentException("Unsupported task command type");
+        }
 
-            throw new TaskPublicationException(exception);
+        try {
+            outboxRepository.save(TaskCommandOutboxEntity.pending(
+                    taskId, topic, type,
+                    objectMapper.writeValueAsString(command)
+            ));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not stage task command", exception);
         }
     }
 }

@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.razeef.bugbrother.indexing.model.PreparedChunkSubmission;
+import com.razeef.bugbrother.indexing.model.PendingChunkSubmission;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Retrieval-augmented context for the AI debug prompt, backed by the
@@ -45,6 +47,9 @@ import java.util.UUID;
 public class VectorSearchService {
 
     private static final int DEFAULT_EF = 50;
+    private static final int MAX_INSERT_ATTEMPTS = 4;
+    private static final long INSERT_DEADLINE_SECONDS = 10;
+    private static final long INITIAL_INSERT_BACKOFF_MILLIS = 200;
 
     @Autowired
     private GatewayGrpc.GatewayBlockingStub gatewayStub;
@@ -300,27 +305,20 @@ public class VectorSearchService {
             RepositoryChunk chunk =
                     submission.chunk();
 
+            GatewayInsertRequest request =
+                    GatewayInsertRequest.newBuilder()
+                            .setKey(GatewayKey.newBuilder()
+                                    .setClientId(clientId)
+                                    .setLabel(chunk.vectorLabel())
+                                    .build())
+                            .setText(chunk.embeddingText())
+                            .setCorrelationId(submission
+                                    .submissionEventId()
+                                    .toString())
+                            .build();
+
             try {
-                gatewayStub.insert(
-                        GatewayInsertRequest.newBuilder()
-                                .setKey(
-                                        GatewayKey.newBuilder()
-                                                .setClientId(clientId)
-                                                .setLabel(
-                                                        chunk.vectorLabel()
-                                                )
-                                                .build()
-                                )
-                                .setText(
-                                        chunk.embeddingText()
-                                )
-                                .setCorrelationId(
-                                        submission
-                                                .submissionEventId()
-                                                .toString()
-                                )
-                                .build()
-                );
+                insertWithRetry(request);
 
                 submitted++;
             } catch (StatusRuntimeException exception) {
@@ -342,6 +340,62 @@ public class VectorSearchService {
                 submissions.size(),
                 submitted
         );
+    }
+
+    private void insertWithRetry(GatewayInsertRequest request) {
+        for (int attempt = 1; attempt <= MAX_INSERT_ATTEMPTS; attempt++) {
+            try {
+                gatewayStub.withDeadlineAfter(
+                        INSERT_DEADLINE_SECONDS,
+                        TimeUnit.SECONDS
+                ).insert(request);
+                return;
+            } catch (StatusRuntimeException exception) {
+                if (attempt == MAX_INSERT_ATTEMPTS
+                        || !isTransientInsertFailure(
+                                exception.getStatus().getCode())) {
+                    throw exception;
+                }
+
+                try {
+                    Thread.sleep(
+                            INITIAL_INSERT_BACKOFF_MILLIS
+                                    << (attempt - 1)
+                    );
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(
+                            "Interrupted while retrying vector insertion",
+                            interrupted
+                    );
+                }
+            }
+        }
+    }
+
+    public void submitStoredChunk(String vectorClientId,
+            PendingChunkSubmission submission) {
+        if (submission == null || submission.submissionEventId() == null
+                || submission.embeddingText() == null) {
+            throw new IllegalArgumentException("Stored chunk submission is incomplete");
+        }
+
+        GatewayInsertRequest request = GatewayInsertRequest.newBuilder()
+                .setKey(GatewayKey.newBuilder()
+                        .setClientId(Long.parseUnsignedLong(vectorClientId))
+                        .setLabel(Long.parseUnsignedLong(
+                                submission.vectorLabel()))
+                        .build())
+                .setText(submission.embeddingText())
+                .setCorrelationId(submission.submissionEventId().toString())
+                .build();
+        insertWithRetry(request);
+    }
+
+    private boolean isTransientInsertFailure(Status.Code code) {
+        return code == Status.Code.UNAVAILABLE
+                || code == Status.Code.DEADLINE_EXCEEDED
+                || code == Status.Code.RESOURCE_EXHAUSTED;
     }
 
     public void deleteVectors(

@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 public class DeterministicRepositoryChunker {
 
     public static final String CHUNKER_VERSION =
-            "line-window-v1";
+            "line-window-v2";
 
     private static final int LINES_PER_CHUNK = 120;
     private static final int OVERLAP_LINES = 20;
@@ -176,7 +176,6 @@ public class DeterministicRepositoryChunker {
 
             String embeddingText = buildEmbeddingText(
                     repositoryFullName,
-                    commitSha,
                     file.path(),
                     language,
                     symbol,
@@ -253,7 +252,6 @@ public class DeterministicRepositoryChunker {
 
     private String buildEmbeddingText(
             String repositoryFullName,
-            String commitSha,
             String path,
             String language,
             String symbol,
@@ -267,10 +265,6 @@ public class DeterministicRepositoryChunker {
 
         text.append("repository: ")
                 .append(repositoryFullName)
-                .append('\n');
-
-        text.append("revision: ")
-                .append(commitSha)
                 .append('\n');
 
         text.append("path: ")

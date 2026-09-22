@@ -1,0 +1,23 @@
+# Reuse the vector gateway's Kafka broker on the shared vsgw network.
+services:
+  kafka:
+    profiles: [full]
+
+  ingestion-service:
+    depends_on: !override
+      postgres: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { memory: 1g }
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: vector-kafka:9092
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx512m
+
+  worker-service:
+    depends_on: !override {}
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: vector-kafka:9092
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx512m
+    deploy:
+      resources:
+        limits: { memory: 1g }

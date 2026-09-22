@@ -9,6 +9,8 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -29,6 +31,7 @@ public class IndexedChunkEntity {
     @Column(name = "file_id", nullable = false)
     private UUID fileId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "chunk_id", nullable = false, length = 64)
     private String chunkId;
 
@@ -54,6 +57,7 @@ public class IndexedChunkEntity {
     @Column(name = "end_line", nullable = false)
     private int endLine;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(
             name = "file_content_sha256",
             nullable = false,
@@ -61,6 +65,7 @@ public class IndexedChunkEntity {
     )
     private String fileContentSha256;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(
             name = "chunk_content_sha256",
             nullable = false,

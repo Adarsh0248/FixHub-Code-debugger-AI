@@ -17,8 +17,7 @@ const base =
 const variants: Record<NonNullable<ButtonProps['variant']>, string> = {
   primary: 'bg-accent-600 text-white hover:bg-accent-700',
   secondary:
-    'bg-white text-[#14141c] border border-black/10 hover:bg-black/[0.03] ' +
-    'dark:bg-white/5 dark:text-white dark:border-white/10 dark:hover:bg-white/10',
+    'bg-white text-[#14141c] border border-black/10 hover:bg-black/[0.03]',
   ghost: 'text-[#14141c]/70 hover:bg-black/5 dark:text-white/70 dark:hover:bg-white/10',
   danger: 'bg-red-600 text-white hover:bg-red-700',
 };

@@ -55,6 +55,10 @@ public class GitAiLayer {
     }
 
     public String askAiGuide(ContextBundle bundle) {
+        return askAiGuide(bundle, false);
+    }
+
+    public String askAiGuide(ContextBundle bundle, boolean contextRequestsUnavailable) {
         if (bundle == null) {
             throw new IllegalArgumentException("Context bundle is required");
         }
@@ -74,6 +78,30 @@ public class GitAiLayer {
             appendContextFile(request, file, "SUPPORTING FILE");
         }
 
+        if (contextRequestsUnavailable) {
+            request.append("The files requested in the previous response are unavailable "
+                    + "in this index generation. Finish the guidance using only the "
+                    + "source files above. Set additionalContextRequests to [] and "
+                    + "state any uncertainty in the explanation.\n");
+        }
+
+        return aiService.chatWithSystem(guideSystemPrompt(), request.toString());
+    }
+
+    public String askAiGuideWithConcreteExplanation(ContextBundle bundle) {
+        StringBuilder request = new StringBuilder();
+        request.append("The previous explanation was only a placeholder. Give a concrete "
+                + "root-cause analysis for this request using the following source files. "
+                + "Name the actual methods that load and save data, describe when they run, "
+                + "and give verification steps. Set changes and additionalContextRequests "
+                + "to empty arrays.\n\n");
+        request.append("Error query:\n").append(bundle.errorQuery()).append("\n\n");
+        for (ContextFile file : bundle.primaryFiles()) {
+            appendContextFile(request, file, "PRIMARY FILE");
+        }
+        for (ContextFile file : bundle.supportingFiles()) {
+            appendContextFile(request, file, "SUPPORTING FILE");
+        }
         return aiService.chatWithSystem(guideSystemPrompt(), request.toString());
     }
 
@@ -177,7 +205,7 @@ public class GitAiLayer {
                 {
                   "changes": [],
                   "additionalContextRequests": ["exact/repository/path"],
-                  "explanation": "detailed developer guidance"
+                  "explanation": "your concrete analysis of these source files"
                 }
 
                 The changes array must always be empty. In explanation, describe the root cause,
@@ -185,6 +213,8 @@ public class GitAiLayer {
                 useful, and verification steps. Do not claim that files were changed, committed,
                 or pushed. If more context is required, request only exact repository paths in
                 additionalContextRequests. Otherwise use an empty array.
+                Never copy the example explanation text. Name actual files and methods from
+                the supplied source, and explain the observed save and load sequence.
                 """;
     }
 }

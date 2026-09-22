@@ -7,6 +7,8 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -33,6 +35,7 @@ public class IndexedSourceFileEntity {
     @Column(name = "git_blob_sha", nullable = false, length = 64)
     private String gitBlobSha;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(
             name = "content_sha256",
             nullable = false,

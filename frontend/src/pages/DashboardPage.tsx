@@ -308,6 +308,13 @@ export function DashboardPage({ username, avatarUrl }: DashboardPageProps) {
               <Button type="submit" disabled={!canIndex}>
                 {indexing ? "Starting indexing..." : "Index repository"}
               </Button>
+              {!selectedBranch && (
+                <p className="text-sm text-slate-600">
+                  {branches.length === 0
+                    ? "Load branches, then choose one to enable indexing."
+                    : "Choose a branch to enable indexing."}
+                </p>
+              )}
             </form>
           </Card>
 

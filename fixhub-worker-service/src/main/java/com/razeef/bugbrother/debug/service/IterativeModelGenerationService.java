@@ -10,6 +10,7 @@ import com.razeef.bugbrother.debug.exception.ModelResponseValidationException;
 import com.razeef.bugbrother.retrieval.client.IndexContextClient;
 import com.razeef.bugbrother.retrieval.config.ContextBudgetProperties;
 import com.razeef.bugbrother.retrieval.exception.ContextExpansionException;
+import com.razeef.bugbrother.retrieval.exception.ContextRetrievalException;
 import com.razeef.bugbrother.retrieval.model.ContextBundle;
 import com.razeef.bugbrother.retrieval.model.DependencyExpansion;
 import com.razeef.bugbrother.retrieval.model.RequestedContextFile;
@@ -17,6 +18,7 @@ import com.razeef.bugbrother.retrieval.model.ResolvedSourceFiles;
 import com.razeef.bugbrother.retrieval.model.VectorContext;
 import com.razeef.bugbrother.retrieval.service.ContextBundleService;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -100,6 +102,20 @@ public class IterativeModelGenerationService {
                 );
             }
             if (requestedPaths.isEmpty()) {
+                if (mode == DebugMode.GUIDE_ONLY
+                        && !hasConcreteExplanation(response)) {
+                    response = responseParser.parse(
+                            gitAiLayer.askAiGuideWithConcreteExplanation(bundle)
+                    );
+                    if (!response.changes().isEmpty()
+                            || !normalizeRequests(
+                            response.additionalContextRequests()).isEmpty()
+                            || !hasConcreteExplanation(response)) {
+                        throw new ModelResponseValidationException(
+                                "The model did not provide concrete debugging guidance"
+                        );
+                    }
+                }
                 return new ModelGenerationResult(
                         response,
                         bundle,
@@ -124,6 +140,9 @@ public class IterativeModelGenerationService {
                     .toList();
 
             if (newPaths.isEmpty()) {
+                if (mode == DebugMode.GUIDE_ONLY) {
+                    return finishGuideWithAvailableContext(bundle, round + 2);
+                }
                 throw new ContextExpansionException(
                         "The model repeatedly requested files already in primary context"
                 );
@@ -136,11 +155,22 @@ public class IterativeModelGenerationService {
                 );
             }
 
-            ResolvedSourceFiles resolved = indexContextClient.resolveFiles(
-                    generationId,
-                    vectorClientId,
-                    newPaths
-            );
+            ResolvedSourceFiles resolved;
+            try {
+                resolved = indexContextClient.resolveFiles(
+                        generationId,
+                        vectorClientId,
+                        newPaths
+                );
+            } catch (ContextRetrievalException exception) {
+                if (mode != DebugMode.GUIDE_ONLY
+                        || !(exception.getCause()
+                        instanceof WebClientResponseException.BadRequest)) {
+                    throw exception;
+                }
+
+                return finishGuideWithAvailableContext(bundle, round + 2);
+            }
             validateResolvedFiles(
                     resolved,
                     generationId,
@@ -172,6 +202,31 @@ public class IterativeModelGenerationService {
                 .map(pathPolicy::normalize)
                 .distinct()
                 .toList();
+    }
+
+    private boolean hasConcreteExplanation(StructuredDebugResponse response) {
+        return response.explanation() != null
+                && response.explanation().trim().length() >= 100
+                && !response.explanation().toLowerCase()
+                .contains("detailed developer guidance");
+    }
+
+    private ModelGenerationResult finishGuideWithAvailableContext(
+            ContextBundle bundle,
+            int rounds
+    ) {
+        StructuredDebugResponse fallback = responseParser.parse(
+                gitAiLayer.askAiGuideWithConcreteExplanation(bundle)
+        );
+        if (!fallback.changes().isEmpty()
+                || !normalizeRequests(
+                fallback.additionalContextRequests()).isEmpty()
+                || !hasConcreteExplanation(fallback)) {
+            throw new ModelResponseValidationException(
+                    "The model could not finish guidance with available files"
+            );
+        }
+        return new ModelGenerationResult(fallback, bundle, rounds);
     }
 
     private void validateResolvedFiles(
